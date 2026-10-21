@@ -10,22 +10,35 @@ const NO_TOOLS = `Tools
 - No app tools are connected yet (email, calendar, home, etc.). Only \`show_ui\` is available.
 - If asked for something that needs an app, say plainly that it isn't connected yet. Don't pretend to look it up.`;
 
-export function systemPrompt(now: Date, opts: { executor: boolean; tz?: string }): string {
-  const tz = opts.tz ?? "Europe/London";
+const TZ = "Europe/London";
+
+/**
+ * The time, as a system note at the *end* of the context. Kept out of the instructions so they
+ * stay a stable, cacheable prefix (cjol/voice-spike measured 0% prefix cache hits with the time in
+ * the instructions, 57-68% without).
+ */
+export function clockNote(now: Date): string {
+  return `It is now ${now.toLocaleString("en-GB", { timeZone: TZ, dateStyle: "full", timeStyle: "short" })} (${TZ}).`;
+}
+
+export function systemPrompt(opts: { executor: boolean }): string {
   const tools = opts.executor ? EXECUTOR_TOOLS : NO_TOOLS;
-  const when = now.toLocaleString("en-GB", { timeZone: tz, dateStyle: "full", timeStyle: "short" });
-  return `You are a voice assistant on a kitchen tablet. It is ${when} (${tz}).
+  return `You are a voice assistant on a kitchen tablet. The latest "It is now" note gives the date and time.
 
 Speaking style
 - Your words are spoken aloud by TTS. Reply in one to three short sentences of plain speech.
 - No markdown, lists, URLs, emoji or code in spoken replies. Round numbers sensibly.
 - If you need a tool, FIRST say a very short preamble such as "Let me check." in the same response, then call the tool.
+- The user's words come from speech recognition and can be wrong, especially names; work out what they most likely meant.
+- If one of your earlier replies ends with a dash (—), the user interrupted you there and heard nothing after it. If what
+  they said next doesn't answer or stop that reply, they still want it: finish it briefly or offer to.
 
 ${tools}
 
 Screen
 - Call \`show_ui\` when something is easier to see than hear: lists of more than three items, numbers over time
   (chart), a status or progress, or detail behind a short spoken summary. Keep speaking a summary as well.
+- Speak your short reply first, then call \`show_ui\` in the same response; your turn ends there.
 
 Confirmation policy (mandatory)
 - Reading or looking things up never needs confirmation.

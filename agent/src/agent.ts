@@ -11,9 +11,9 @@ import {
 import type { Env } from "./env";
 import { FluxStt, type FluxEvent } from "./stt";
 import { NON_TOOL_MODELS, streamChat, type ChatMessage, type ToolDef } from "./llm";
-import { TtsQueue } from "./tts";
+import { AuraTts, TtsTurn } from "./tts";
 import { SentenceChunker, speakable } from "./sentences";
-import { systemPrompt } from "./prompt";
+import { clockNote, systemPrompt } from "./prompt";
 import { toolResultForModel } from "./unwrap";
 
 const EXECUTOR = "executor";
@@ -24,6 +24,15 @@ const PREAMBLE = "Let me check.";
 /** A short turn ending this soon after a wake-word barge-in is the wake word itself (Flux may hear "Hey Jarvis" as "HRV"). */
 const WAKE_ECHO_MS = 4_000;
 const WAKE_PREFIX = /^\s*(hey|hi|okay|ok)[,\s]+jarvis\b[,.!?\s]*/i;
+
+interface Turn {
+  id: string;
+  abort: AbortController;
+  tts: TtsTurn;
+  firstAudioAt: number;
+  /** Index of this turn's final assistant message, if the LLM finished before any barge-in. */
+  replyIndex?: number;
+}
 
 interface State {
   /** Per-device override of env.LLM_MODEL (set via onRequest POST /config). */
@@ -45,7 +54,10 @@ export class VoiceAgent extends Agent<Env, State> {
   private stt: FluxStt | null = null;
   private history: ChatMessage[] = [];
   private lastTurnAt = 0;
-  private turn: { id: string; abort: AbortController } | null = null;
+  private turn: Turn | null = null;
+  /** A reply cut off by barge-in, until we know how much of it was heard (see settleInterrupted). */
+  private interrupted: { turn: Turn; at: number } | null = null;
+  private aura: AuraTts | null = null;
   private agentState: AgentState = "idle";
   private wakeHeardAt = 0;
 
@@ -73,8 +85,7 @@ export class VoiceAgent extends Agent<Env, State> {
     if (this.device?.id !== conn.id) return;
     this._device = null;
     this.cancelTurn();
-    this.stt?.close();
-    this.stt = null;
+    this.endSession();
   }
 
   async onMessage(conn: Connection, message: WSMessage) {
@@ -98,8 +109,7 @@ export class VoiceAgent extends Agent<Env, State> {
         await this.startSession();
         break;
       case "end_session":
-        this.stt?.close();
-        this.stt = null;
+        this.endSession();
         this.setVoiceState("idle");
         break;
       case "interrupt":
@@ -107,7 +117,11 @@ export class VoiceAgent extends Agent<Env, State> {
         this.bargeIn();
         break;
       case "playback_done":
-        break; // TODO: use for follow-up window timing on the server if needed
+        break;
+      case "played":
+        // How much of an interrupted reply the device actually played.
+        if (this.interrupted?.turn.id === msg.turnId) this.settleInterrupted(msg.playedMs);
+        break;
       case "text_input":
         if (msg.text?.trim()) void this.runTurn(msg.text.trim());
         break;
@@ -131,7 +145,8 @@ export class VoiceAgent extends Agent<Env, State> {
       this.setState({ ...this.state, model: body.model || undefined });
       return Response.json({ model: this.model });
     }
-    return Response.json({ model: this.model, mcp: this.getMcpServers().servers });
+    await this.loadHistory();
+    return Response.json({ model: this.model, mcp: this.getMcpServers().servers, history: this.history });
   }
 
   // ---- Executor MCP --------------------------------------------------------
@@ -215,7 +230,19 @@ export class VoiceAgent extends Agent<Env, State> {
 
   // ---- STT -----------------------------------------------------------------
 
+  private auraFor(): AuraTts {
+    return (this.aura ??= new AuraTts(this.env, this.env.TTS_VOICE));
+  }
+
+  private endSession() {
+    this.stt?.close();
+    this.stt = null;
+    this.aura?.close();
+    this.aura = null;
+  }
+
   private async startSession() {
+    this.auraFor().warm(); // opening an Aura socket costs ~0.5 s; do it while the user speaks
     if (!this.stt) {
       const stt: FluxStt = new FluxStt(this.env, {
         onEvent: (e) => this.onFlux(e),
@@ -262,52 +289,103 @@ export class VoiceAgent extends Agent<Env, State> {
   // ---- turn loop -----------------------------------------------------------
 
   private bargeIn() {
-    if (!this.turn) return;
-    this.send({ type: "stop_playback", turnId: this.turn.id });
+    const turn = this.turn;
+    if (!turn) return;
+    this.send({ type: "stop_playback", turnId: turn.id });
     this.cancelTurn();
+    // The device answers stop_playback/interrupt with `played`; until then we only know an upper bound.
+    if (turn.tts.started) this.interrupted = { turn, at: Date.now() };
     this.setVoiceState("listening");
   }
 
   private cancelTurn() {
-    this.turn?.abort.abort();
+    const turn = this.turn;
+    if (!turn) return;
+    turn.abort.abort();
+    void turn.tts.abort();
     this.turn = null;
+  }
+
+  /**
+   * Record an interrupted reply as only what was heard, ending with a dash (the prompt explains the
+   * dash). `playedMs` comes from the device; without it, wall-clock time since first audio is an
+   * upper bound (audio is sent faster than real time, so "sent" would overstate it).
+   */
+  private settleInterrupted(playedMs?: number) {
+    const cut = this.interrupted;
+    if (!cut) return;
+    this.interrupted = null;
+    const heardMs = playedMs ?? Math.max(0, cut.at - cut.turn.firstAudioAt);
+    const heard = cut.turn.tts.segments.filter((s) => s.endMs <= heardMs).map((s) => s.text).join(" ");
+    const content = `${heard}—`.trim();
+    const i = cut.turn.replyIndex;
+    if (i !== undefined && this.history[i]?.role === "assistant") {
+      this.history[i] = { role: "assistant", content }; // the LLM had finished; keep only what was heard
+    } else {
+      this.dropDanglingToolCalls();
+      this.history.push({ role: "assistant", content });
+    }
+    void this.saveHistory();
+  }
+
+  /** An aborted turn can leave an assistant tool_calls message without all its results: invalid next time. */
+  private dropDanglingToolCalls() {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") return;
+      if (m.role === "assistant" && m.tool_calls?.length) {
+        const answered = new Set(this.history.slice(i + 1).flatMap((x) => (x.role === "tool" ? [x.tool_call_id] : [])));
+        if (!m.tool_calls.every((c) => answered.has(c.id))) this.history.splice(i);
+        return;
+      }
+    }
   }
 
   private async runTurn(userText: string) {
     this.cancelTurn();
-    const turn = { id: crypto.randomUUID(), abort: new AbortController() };
-    this.turn = turn;
-    const signal = turn.abort.signal;
-
     await this.loadHistory();
+    this.settleInterrupted(); // no `played` report came in time: use the estimate
+    this.dropDanglingToolCalls();
     if (Date.now() - this.lastTurnAt > HISTORY_IDLE_RESET_MS) this.history = [];
     this.lastTurnAt = Date.now();
     this.history.push({ role: "user", content: userText });
     this.setVoiceState("thinking");
 
-    const tts = new TtsQueue(
-      this.env,
-      this.env.TTS_VOICE,
+    const turn: Turn = {
+      id: crypto.randomUUID(),
+      abort: new AbortController(),
+      firstAudioAt: 0,
+      tts: null as unknown as TtsTurn,
+    };
+    turn.tts = new TtsTurn(
+      this.auraFor(),
       (pcm) => this.turn === turn && this.device?.send(pcm),
       () => {
+        turn.firstAudioAt = Date.now();
         this.send({ type: "tts_start", turnId: turn.id, sampleRate: TTS_SAMPLE_RATE, encoding: "pcm_s16le" });
         this.setVoiceState("speaking");
       },
-      signal,
     );
+    this.turn = turn;
+    const signal = turn.abort.signal;
     const say = (s: string) => {
       const clean = speakable(s);
       if (!clean) return;
       this.send({ type: "assistant_text", turnId: turn.id, text: clean });
-      tts.enqueue(clean);
+      turn.tts.say(clean);
     };
 
     try {
       const tools = this.toolDefs();
+      const executor = tools.some((t) => t.function.name !== "show_ui");
       for (let round = 0; round <= MAX_TOOL_ROUNDS && !signal.aborted; round++) {
         const chunker = new SentenceChunker();
-        const executor = tools.some((t) => t.function.name !== "show_ui");
-        const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(new Date(), { executor }) }, ...this.history];
+        // Static instructions first (a cacheable prefix), the time last.
+        const messages: ChatMessage[] = [
+          { role: "system", content: systemPrompt({ executor }) },
+          ...this.history,
+          { role: "system", content: clockNote(new Date()) },
+        ];
         const { text, toolCalls } = await streamChat(
           this.env,
           this.model,
@@ -320,7 +398,7 @@ export class VoiceAgent extends Agent<Env, State> {
         if (rest) say(rest);
 
         if (!toolCalls.length) {
-          this.history.push({ role: "assistant", content: text });
+          turn.replyIndex = this.history.push({ role: "assistant", content: text }) - 1;
           break;
         }
         // Spoken preamble before tools, if the model didn't produce one itself.
@@ -332,13 +410,16 @@ export class VoiceAgent extends Agent<Env, State> {
           const content = await this.runTool(call.function.name, call.function.arguments);
           this.history.push({ role: "tool", tool_call_id: call.id, content });
         }
+        // Spoke and only drew on screen: nothing left to say, so skip another LLM round trip.
+        if (text.trim() && toolCalls.every((c) => c.function.name === "show_ui")) break;
       }
-      await tts.drain();
-      if (!signal.aborted && tts.started) this.send({ type: "tts_end", turnId: turn.id });
+      await turn.tts.drain();
+      if (!signal.aborted && turn.tts.started) this.send({ type: "tts_end", turnId: turn.id });
     } catch (err) {
       if (!signal.aborted) {
         console.error("turn failed", err);
         this.send({ type: "error", message: String(err) });
+        this.dropDanglingToolCalls();
         // Drop the dangling user message so history stays valid.
         if (this.history.at(-1)?.role === "user") this.history.pop();
       }
@@ -348,8 +429,12 @@ export class VoiceAgent extends Agent<Env, State> {
         this.setVoiceState(this.stt ? "listening" : "idle");
       }
       this.trimHistory();
-      await this.ctx.storage.put("history", { at: this.lastTurnAt, messages: this.history });
+      await this.saveHistory();
     }
+  }
+
+  private saveHistory() {
+    return this.ctx.storage.put("history", { at: this.lastTurnAt, messages: this.history });
   }
 
   private historyLoaded = false;

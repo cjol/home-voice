@@ -27,6 +27,8 @@ export type ClientMessage =
   | { type: "end_session"; reason?: string }
   /** Wake word heard mid-session: stop speaking now, and treat the next short turn as the wake word itself. */
   | { type: "interrupt" }
+  /** After stopping playback early (barge-in): how much of that reply's audio actually played. */
+  | { type: "played"; turnId: string; playedMs: number }
   /** Device finished playing a TTS segment (used for follow-up timing). */
   | { type: "playback_done"; turnId: string }
   /** Typed/test input: runs a turn exactly as if Flux had transcribed it (skips STT). */
