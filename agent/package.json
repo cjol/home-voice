@@ -1,0 +1,22 @@
+{
+  "name": "@home-voice/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --ip laptop --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test:unwrap": "node --experimental-strip-types src/unwrap.test.ts"
+  },
+  "dependencies": {
+    "@home-voice/shared": "*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "agents": "^0.29.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
+  }
+}

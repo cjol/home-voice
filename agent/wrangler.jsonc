@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "home-voice-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "39f3f1b5073547672a0d7ad67319df81",
+  "ai": { "binding": "AI" },
+  "durable_objects": {
+    "bindings": [{ "name": "VoiceAgent", "class_name": "VoiceAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VoiceAgent"] }],
+  "vars": {
+    // Swap freely; benchmark still evaluating. Any Workers AI chat model with tool calling.
+    "LLM_MODEL": "@cf/openai/gpt-oss-120b",
+    "TTS_VOICE": "luna",
+    "EXECUTOR_MCP_URL": "https://mcp.executor.sh/mcp"
+    // PUBLIC_URL (OAuth callback host) is derived from the request if unset.
+  },
+  "observability": { "enabled": true }
+  // Secrets (wrangler secret put): DEVICE_TOKEN
+}

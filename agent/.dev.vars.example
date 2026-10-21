@@ -1,0 +1,5 @@
+# Copy to agent/.dev.vars for `wrangler dev`. Never commit the real file.
+# Shared secret the tablet sends as ?token=... when opening the WebSocket.
+DEVICE_TOKEN=change-me-long-random-string
+# Optional: override the OAuth callback host (e.g. your tunnel / workers.dev URL)
+# PUBLIC_URL=https://home-voice-agent.<subdomain>.workers.dev
