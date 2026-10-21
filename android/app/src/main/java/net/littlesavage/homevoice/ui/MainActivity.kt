@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import net.littlesavage.homevoice.Settings
 import net.littlesavage.homevoice.protocol.UiMessage
@@ -38,7 +39,10 @@ class MainActivity : ComponentActivity() {
             Text("Home Voice", style = MaterialTheme.typography.headlineLarge)
             Text("Device id: ${settings.deviceId}")
             OutlinedTextField(url, { url = it }, label = { Text("Agent URL (https://home-voice-agent.<sub>.workers.dev)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(token, { token = it }, label = { Text("Device token") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                token, { token = it }, label = { Text("Device token") }, modifier = Modifier.fillMaxWidth(),
+                singleLine = true, visualTransformation = PasswordVisualTransformation(),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
                     settings.serverUrl = url; settings.token = token; settings.enabled = true
