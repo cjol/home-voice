@@ -83,6 +83,9 @@ class VoiceService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val tone by lazy { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60) }
 
+    private var suppressMicUntil = 0L
+    private val silentFrame = ShortArray(1280)
+
     @Volatile private var inSession = false
     @Volatile private var deadline = 0L
     @Volatile private var agentState = "idle"
@@ -172,6 +175,14 @@ class VoiceService : LifecycleService() {
 
     // Runs on the mic thread every 80 ms.
     private fun onFrame(frame: ShortArray) {
+        // Half duplex: AEC on some phones still passes speaker audio through. Never
+        // feed that audio to either recognizer, including the speaker/room tail.
+        val now = SystemClock.elapsedRealtime()
+        if (player?.isPlaying == true) suppressMicUntil = now + 600L
+        if (now < suppressMicUntil) {
+            if (inSession) client?.sendAudio(silentFrame)
+            return
+        }
         val heard = wakeWord?.process(frame) == true
         if (!inSession) {
             if (heard) beginSession()

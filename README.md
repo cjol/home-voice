@@ -40,9 +40,7 @@ A turn works like this:
 4. On tool calls, the agent speaks a short preamble first ("Let me check."). The model is prompted to say one itself, and code adds one if it doesn't. Then it runs the tools and loops, up to 5 rounds.
 5. After playback the tablet keeps streaming for an 8 s follow-up window. If nothing happens it sends `end_session` and goes back to wake-word-only listening.
 
-**Barge-in** has two paths:
-- **Server:** the mic keeps streaming during playback, with AEC on. A Flux `StartOfTurn` while the agent is thinking or speaking aborts the LLM, sends Aura a `Clear` and sends `stop_playback`.
-- **Local:** the wake word heard mid-session flushes the AudioTrack and sends `interrupt`. A short turn right after it is treated as the wake word itself and dropped.
+**Playback and microphone:** Android currently uses half-duplex audio to prevent speaker feedback on phones whose AEC does not remove the assistant's voice. During playback and for 600 ms afterwards, microphone frames are replaced with silence for STT and are not passed to the wake-word detector. Listening resumes after the hardware playback buffer drains. Spoken interruption is disabled during this interval; wait for the reply to finish before following up. The protocol still supports interruption for a future reliable echo-cancellation path.
 
 **What was heard:** either way, the tablet reports `played` (ms of that reply that came out of the speaker, from the AudioTrack playback head). History keeps only the sentences heard, ending with "—". The prompt tells the model what the dash means, so it can offer to finish. Many of these patterns come from [cjol/voice-spike](https://github.com/cjol/voice-spike) (`spikes/runtime-host`).
 

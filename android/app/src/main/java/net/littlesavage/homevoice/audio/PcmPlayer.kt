@@ -24,6 +24,7 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
     @Volatile var isPlaying = false
         private set
     private var headAtBegin = 0L
+    @Volatile private var framesWritten = 0L
 
     /** ms of the current reply that has actually come out of the speaker. */
     val playedMs: Long
@@ -32,6 +33,7 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
     fun begin(sampleRate: Int) {
         stop()
         val t = track?.takeIf { it.sampleRate == sampleRate } ?: createTrack(sampleRate).also { track?.release(); track = it }
+        framesWritten = 0L
         headAtBegin = t.playbackHeadPosition.toLong() and 0xffffffffL
         t.play()
         isPlaying = true
@@ -84,10 +86,15 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
                 val item = try { queue.poll(200, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { break } ?: continue
                 val gen = generation
                 when (item) {
-                    is Item.Audio -> track?.write(item.bytes, 0, item.bytes.size, AudioTrack.WRITE_BLOCKING)
+                    is Item.Audio -> {
+                        val written = track?.write(item.bytes, 0, item.bytes.size, AudioTrack.WRITE_BLOCKING) ?: 0
+                        if (gen == generation && written > 0) framesWritten += written / 2
+                    }
                     is Item.End -> {
                         // Wait for the hardware buffer to empty before declaring done.
-                        Thread.sleep(300)
+                        while (running && gen == generation && track?.let {
+                            (it.playbackHeadPosition.toLong() and 0xffffffffL) - headAtBegin < framesWritten
+                        } == true) Thread.sleep(20)
                         if (gen == generation) { isPlaying = false; onDrained(item.turnId) }
                     }
                 }
