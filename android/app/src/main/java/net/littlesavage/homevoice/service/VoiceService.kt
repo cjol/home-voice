@@ -62,6 +62,8 @@ class VoiceService : LifecycleService() {
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, VoiceService::class.java))
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, VoiceService::class.java))
 
+        private const val ACTION_STOP = "net.littlesavage.homevoice.STOP"
+
         private const val ACTION_TEXT = "net.littlesavage.homevoice.TEXT"
         private const val ACTION_INJECT = "net.littlesavage.homevoice.INJECT"
 
@@ -110,6 +112,13 @@ class VoiceService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        if (intent?.action == ACTION_STOP) settings.enabled = false
+        if (!settings.enabled) {
+            getSystemService(NotificationManager::class.java).cancel(4)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         try {
             ServiceCompat.startForeground(this, NOTIF_ID, notification("Starting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } catch (e: Exception) {
@@ -308,6 +317,10 @@ class VoiceService : LifecycleService() {
         .setContentTitle("Home Voice")
         .setContentText(text)
         .setOngoing(true)
+        .addAction(0, "Stop listening", PendingIntent.getService(
+            this, 5, Intent(this, VoiceService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        ))
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
         .build()
 
@@ -325,6 +338,10 @@ class VoiceService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        inSession = false
+        Conversation.end()
+        UiBus.dismiss()
+        Conversation.clear()
         panel.dismiss()
         mic?.stop(); mic = null
         player?.release(); player = null

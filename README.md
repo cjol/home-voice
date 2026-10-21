@@ -247,3 +247,5 @@ These are known gaps, in rough priority order:
 - [ ] Feed `ui_event` taps back into the conversation. Load images in cards.
 - [ ] Compare `USAGE_ASSISTANT` and `USAGE_VOICE_COMMUNICATION` playback for AEC quality.
 - [ ] Custom wake word training.
+
+**Stopping:** use **Stop listening** in the persistent Home Voice notification, or **Stop** on the app settings screen. This stops audio, removes assistant screens and disables startup on boot until you choose **Save & start** again. Swiping the app out of Recents does not stop its background service.
