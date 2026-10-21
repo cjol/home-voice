@@ -33,7 +33,15 @@ class MainActivity : ComponentActivity() {
         var url by remember { mutableStateOf(settings.serverUrl) }
         var token by remember { mutableStateOf(settings.token) }
         val status by VoiceService.status.collectAsState()
-        val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+        val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            // A first install must wait for permission before starting a microphone service.
+            if (grants[Manifest.permission.RECORD_AUDIO] == true) {
+                VoiceService.start(this@MainActivity)
+            } else {
+                settings.enabled = false
+                android.widget.Toast.makeText(this@MainActivity, "Microphone permission is needed to listen", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
 
         Column(Modifier.fillMaxSize().padding(32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Home Voice", style = MaterialTheme.typography.headlineLarge)
@@ -46,8 +54,8 @@ class MainActivity : ComponentActivity() {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
                     settings.serverUrl = url; settings.token = token; settings.enabled = true
+                    VoiceService.stop(this@MainActivity)
                     perms.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS))
-                    VoiceService.stop(this@MainActivity); VoiceService.start(this@MainActivity)
                 }) { Text("Save & start") }
                 OutlinedButton(onClick = { settings.enabled = false; VoiceService.stop(this@MainActivity) }) { Text("Stop") }
             }

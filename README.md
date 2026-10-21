@@ -281,3 +281,7 @@ mise exec -- node agent/scripts/screen-state.mjs verify
 ```
 
 The table activity keeps Android’s status and navigation bars visible. When the wake word fires with the screen off or locked, the same activity opens immediately with a transcript and the bottom action, even without a generated card. It displays above the keyguard without unlocking the device, and closes when a conversation-only session ends.
+
+### Sharing a personal APK
+
+Run `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 android/scripts/build-share.sh` to produce `dist/home-voice-0.1.0-arm64.apk` and setup instructions. See [android/SHARING.md](android/SHARING.md). This non-debuggable ARM64 build includes wake-word models and excludes the ADB debug receiver. It is signed with the existing local development key. Agent credentials are entered on the device and are not embedded in the APK.

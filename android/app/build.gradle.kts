@@ -15,12 +15,24 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") } // Pixel Tablet + emulator
     }
 
     buildTypes {
+        debug { ndk { abiFilters += listOf("arm64-v8a", "x86_64") } }
         release {
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
             isMinifyEnabled = false
+        }
+        // Personal sideload build: signed with this machine's existing development
+        // key for upgrade compatibility, without debug receivers or tooling.
+        create("share") {
+            initWith(getByName("release"))
+            signingConfig = getByName("debug").signingConfig
+            matchingFallbacks += "release"
+            ndk {
+                abiFilters.clear()
+                abiFilters += "arm64-v8a"
+            }
         }
     }
     compileOptions {
