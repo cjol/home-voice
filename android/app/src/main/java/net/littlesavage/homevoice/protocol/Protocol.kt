@@ -32,6 +32,8 @@ sealed interface ClientMessage {
     data object Interrupt : ClientMessage
     @Serializable @SerialName("playback_done")
     data class PlaybackDone(val turnId: String) : ClientMessage
+    @Serializable @SerialName("text_input")
+    data class TextInput(val text: String) : ClientMessage
     @Serializable @SerialName("ui_event")
     data class UiEvent(val uiId: String, val action: String, val value: String? = null) : ClientMessage
     @Serializable @SerialName("ping")

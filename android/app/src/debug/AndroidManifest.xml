@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: adb control surface for emulator/device testing. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".debug.DebugReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver"
+            xmlns:tools="http://schemas.android.com/tools">
+            <intent-filter>
+                <action android:name="net.littlesavage.homevoice.debug.CONFIG" />
+                <action android:name="net.littlesavage.homevoice.debug.SAY" />
+                <action android:name="net.littlesavage.homevoice.debug.INJECT" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

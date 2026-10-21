@@ -26,6 +26,20 @@ class MicCapture(private val onFrame: (ShortArray) -> Unit) {
     private var thread: Thread? = null
     @Volatile private var running = false
     private val effects = mutableListOf<android.media.audiofx.AudioEffect>()
+    private val injected = java.util.concurrent.ConcurrentLinkedQueue<ShortArray>()
+
+    /**
+     * Debug/testing: replace upcoming mic frames with this PCM (s16le 16 kHz mono),
+     * so the emulator can be driven with recorded speech. Real capture keeps running.
+     */
+    fun inject(pcm: ByteArray) {
+        val samples = java.nio.ByteBuffer.wrap(pcm).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+        while (samples.hasRemaining()) {
+            val f = ShortArray(FRAME_SAMPLES)
+            samples.get(f, 0, minOf(FRAME_SAMPLES, samples.remaining()))
+            injected.add(f)
+        }
+    }
 
     @SuppressLint("MissingPermission") // checked by the caller before starting the service
     fun start() {
@@ -52,7 +66,7 @@ class MicCapture(private val onFrame: (ShortArray) -> Unit) {
                     if (n < 0) { Log.e(TAG, "read error $n"); running = false; break }
                     off += n
                 }
-                if (off == FRAME_SAMPLES) onFrame(frame.copyOf())
+                if (off == FRAME_SAMPLES) onFrame(injected.poll() ?: frame.copyOf())
             }
         }, "mic-capture").apply { priority = Thread.MAX_PRIORITY; start() }
     }

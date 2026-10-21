@@ -58,6 +58,17 @@ class VoiceService : LifecycleService() {
 
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, VoiceService::class.java))
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, VoiceService::class.java))
+
+        private const val ACTION_TEXT = "net.littlesavage.homevoice.TEXT"
+        private const val ACTION_INJECT = "net.littlesavage.homevoice.INJECT"
+
+        /** Debug: feed a PCM file into the mic path in place of live audio. */
+        fun injectPcm(ctx: Context, path: String) =
+            ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_INJECT).putExtra("path", path))
+
+        /** Typed request: runs a turn without STT (handy on the emulator). */
+        fun sendText(ctx: Context, text: String) =
+            ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_TEXT).putExtra("text", text))
     }
 
     private lateinit var settings: Settings
@@ -82,6 +93,18 @@ class VoiceService : LifecycleService() {
         super.onStartCommand(intent, flags, startId)
         ServiceCompat.startForeground(this, NOTIF_ID, notification("Starting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         if (mic == null) startPipeline()
+        when (intent?.action) {
+            ACTION_TEXT -> intent.getStringExtra("text")?.takeIf { it.isNotBlank() }?.let { text ->
+                if (!inSession) beginSession(sendStart = false)
+                client?.send(ClientMessage.TextInput(text))
+                publish { it.copy(lastTranscript = text) }
+            }
+            ACTION_INJECT -> intent.getStringExtra("path")?.let { path ->
+                runCatching { java.io.File(path).readBytes() }
+                    .onSuccess { mic?.inject(it); Log.i(TAG, "injected ${it.size / 32000.0}s from $path") }
+                    .onFailure { Log.e(TAG, "inject failed", it) }
+            }
+        }
         return START_STICKY
     }
 
@@ -115,8 +138,9 @@ class VoiceService : LifecycleService() {
             return
         }
         client?.sendAudio(frame)
-        if (heard && player?.isPlaying == true) {
-            // Local barge-in.
+        if (heard) {
+            // Local barge-in. Reported even if playback already stopped (Flux may have heard us first)
+            // so the agent can drop the wake word from the transcript.
             player?.stop()
             client?.send(ClientMessage.Interrupt)
             deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
@@ -125,16 +149,17 @@ class VoiceService : LifecycleService() {
         if (!busy && SystemClock.elapsedRealtime() > deadline) endSession("timeout")
     }
 
-    private fun beginSession() {
+    private fun beginSession(sendStart: Boolean = true) {
         val c = client
         if (c == null || !c.connected) {
             tone.startTone(ToneGenerator.TONE_PROP_NACK, 150)
             return
         }
         tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+        Log.i(TAG, "session start (wake score ${wakeWord?.lastScore})")
         inSession = true
         deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
-        c.send(ClientMessage.StartSession(wakeWord = "hey_jarvis"))
+        if (sendStart) c.send(ClientMessage.StartSession(wakeWord = "hey_jarvis"))
         publish { it.copy(mode = "in conversation") }
         updateNotification("Listening…")
     }
@@ -142,6 +167,7 @@ class VoiceService : LifecycleService() {
     private fun endSession(reason: String) {
         if (!inSession) return
         inSession = false
+        Log.i(TAG, "session end: $reason")
         client?.send(ClientMessage.EndSession(reason))
         publish { it.copy(mode = "listening for wake word") }
         updateNotification("Listening for wake word")
@@ -158,18 +184,28 @@ class VoiceService : LifecycleService() {
         override fun onMessage(msg: ServerMessage) {
             when (msg) {
                 is ServerMessage.State -> {
+                    // Back to listening (after a reply or a barge-in): give the user a fresh window to speak.
+                    if (msg.state == "listening" && agentState != "listening") deadline = maxOf(deadline, SystemClock.elapsedRealtime() + NO_SPEECH_MS)
                     agentState = msg.state
                     publish { it.copy(agent = msg.state) }
                 }
                 is ServerMessage.Transcript -> {
+                    if (msg.final) Log.i(TAG, "you: ${msg.text}")
                     deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
                     publish { it.copy(lastTranscript = msg.text) }
                 }
-                is ServerMessage.AssistantText -> publish { it.copy(lastReply = msg.text) }
-                is ServerMessage.TtsStart -> player?.begin(msg.sampleRate)
+                is ServerMessage.AssistantText -> {
+                    Log.i(TAG, "assistant: ${msg.text}")
+                    publish { it.copy(lastReply = msg.text) }
+                }
+                is ServerMessage.TtsStart -> { Log.i(TAG, "tts start"); player?.begin(msg.sampleRate) }
                 is ServerMessage.TtsEnd -> player?.end(msg.turnId)
-                is ServerMessage.StopPlayback -> player?.stop()
-                is ServerMessage.Ui -> showUi(msg.ui)
+                is ServerMessage.StopPlayback -> {
+                    Log.i(TAG, "barge-in: stop playback")
+                    player?.stop()
+                    deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
+                }
+                is ServerMessage.Ui -> { Log.i(TAG, "ui ${msg.ui}"); showUi(msg.ui) }
                 is ServerMessage.DismissUi -> UiBus.dismiss(msg.uiId)
                 is ServerMessage.AuthRequired -> authNotification(msg.url)
                 is ServerMessage.Error -> Log.e(TAG, "agent error: ${msg.message}")

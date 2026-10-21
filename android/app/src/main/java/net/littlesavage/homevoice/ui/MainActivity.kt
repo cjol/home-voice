@@ -60,6 +60,11 @@ class MainActivity : ComponentActivity() {
                 UiBus.show(UiMessage.Card(id = "test", title = "Test card", body = "Overlay rendering works.", ttlMs = 5000))
                 OverlayActivity.bringToFront(this@MainActivity, "Test")
             }) { Text("Test overlay") }
+            var typed by remember { mutableStateOf("") }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(typed, { typed = it }, label = { Text("Type a request (skips STT)") }, modifier = Modifier.weight(1f))
+                Button(onClick = { VoiceService.sendText(this@MainActivity, typed); typed = "" }) { Text("Send") }
+            }
             HorizontalDivider()
             Text("Status", style = MaterialTheme.typography.titleMedium)
             Text("Connected: ${status.connected}   Mode: ${status.mode}   Agent: ${status.agent}")
