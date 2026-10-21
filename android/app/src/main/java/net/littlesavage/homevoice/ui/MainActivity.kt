@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             }) { Text(if (pm.isIgnoringBatteryOptimizations(packageName)) "Battery optimisation: off" else "Disable battery optimisation") }
             OutlinedButton(onClick = {
-                UiBus.show(UiMessage.Card(id = "test", title = "Test card", body = "Overlay rendering works.", ttlMs = 5000))
+                UiBus.showFullscreen(UiMessage.Card(id = "test", title = "Test card", body = "Overlay rendering works.", ttlMs = 5000))
                 OverlayActivity.bringToFront(this@MainActivity, "Test")
             }) { Text("Test overlay") }
             var typed by remember { mutableStateOf("") }

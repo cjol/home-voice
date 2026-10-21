@@ -9,7 +9,9 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,7 +26,7 @@ import net.littlesavage.homevoice.R
 import net.littlesavage.homevoice.protocol.UiMessage
 import net.littlesavage.homevoice.service.VoiceService
 
-/** Full-screen renderer for agent UI. Dismisses itself after the message's ttl. */
+/** Full-screen agent UI (display = "fullscreen", or any UI while the screen is locked), with the conversation underneath. */
 class OverlayActivity : ComponentActivity() {
     companion object {
         private const val DEFAULT_TTL_MS = 20_000L
@@ -58,19 +60,46 @@ class OverlayActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         getSystemService(NotificationManager::class.java).cancel(FSI_NOTIF_ID)
         setContent {
-            val ui by UiBus.current.collectAsState()
+            val ui by UiBus.fullscreen.collectAsState()
+            val convo by Conversation.state.collectAsState()
             val current = ui
-            LaunchedEffect(current?.id) {
+            // Keyed on the content, so a replacement (same id, new rows) restarts the timer.
+            LaunchedEffect(current) {
                 if (current == null) { finish(); return@LaunchedEffect }
-                val ttl = current.ttlMs ?: DEFAULT_TTL_MS
-                if (ttl > 0) { delay(ttl); UiBus.dismiss(current.id) }
+                val ttl = current.ttlMs ?: 0L
+                if (ttl > 0) { delay(ttl); UiBus.closeLocally(current) }
             }
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Box(
-                    Modifier.fillMaxSize().background(Color.Black).clickable { UiBus.dismiss() }.padding(48.dp),
-                    contentAlignment = Alignment.Center,
-                ) { current?.let { UiView(it, Modifier.widthIn(max = 900.dp)) } }
+                Column(Modifier.fillMaxSize().background(Color.Black).padding(horizontal = 48.dp, vertical = 32.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        // Explicit close: a stray tap shouldn't wipe a table you're building.
+                        FilledTonalIconButton(onClick = { current?.let { UiBus.closeLocally(it) } }, modifier = Modifier.size(56.dp)) {
+                            Text("✕", fontSize = 24.sp)
+                        }
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
+                        current?.let { UiView(it, Modifier.widthIn(max = 1100.dp).fillMaxWidth()) }
+                    }
+                    if (convo.turns.isNotEmpty() || convo.active) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 16.dp)
+                                .background(Color(0xFF1C1B1F), RoundedCornerShape(24.dp)).padding(horizontal = 28.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            StateLine(convo)
+                            ConversationTurns(convo.turns, maxTurns = 3, textSize = 20)
+                        }
+                    }
+                }
             }
         }
+    }
+
+    override fun onResume() { super.onResume(); UiBus.fullscreenVisible.value = true }
+    override fun onPause() { super.onPause(); UiBus.fullscreenVisible.value = false }
+
+    @Deprecated("Back closes the screen")
+    override fun onBackPressed() {
+        UiBus.fullscreen.value?.let { UiBus.closeLocally(it) } ?: super.onBackPressed()
     }
 }

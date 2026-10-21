@@ -8,6 +8,10 @@
  *
  * Rules for evolving: add optional fields freely; anything else bumps `v`.
  * Clients must ignore unknown fields and render unknown `kind`s as a plain card.
+ *
+ * Screens are addressable: sending a UI with an existing `id` replaces that screen in place, which
+ * is how the agent builds on a screen over several turns (e.g. a running carb table). `close_ui`
+ * (server message `dismiss_ui`) removes it.
  */
 export const UI_SCHEMA_VERSION = 1 as const;
 
@@ -20,7 +24,11 @@ interface UiBase {
   title?: string;
   /** How long to keep it on screen. 0 = until replaced or dismissed. */
   ttlMs?: number;
+  /** "panel" (default): inside the assistant panel over the current app. "fullscreen": takes over the screen. */
+  display?: Display;
 }
+
+export type Display = "panel" | "fullscreen";
 
 export interface CardUi extends UiBase {
   kind: "card";
@@ -56,16 +64,35 @@ export interface StatusUi extends UiBase {
   progress?: number;
 }
 
-export type UiMessage = CardUi | ListUi | ChartUi | StatusUi;
+export interface TableUi extends UiBase {
+  kind: "table";
+  columns: { label: string; align?: "start" | "end" }[];
+  rows: string[][];
+  /** e.g. a totals row; same width as `columns`. */
+  footer?: string[];
+  /** Small print under the table (sources, assumptions). */
+  note?: string;
+}
+
+export type UiMessage = CardUi | ListUi | ChartUi | StatusUi | TableUi;
 export type UiKind = UiMessage["kind"];
 
 /** JSON Schema (draft-07 subset) used as the LLM tool's parameter schema. */
 export const SHOW_UI_PARAMETERS = {
   type: "object",
   properties: {
-    kind: { type: "string", enum: ["card", "list", "chart", "status"] },
+    id: {
+      type: "string",
+      description: "Short stable id, e.g. \"carbs\". Reuse it to replace that screen in place (resend the full content).",
+    },
+    kind: { type: "string", enum: ["card", "list", "chart", "status", "table"] },
     title: { type: "string" },
-    ttlMs: { type: "integer", description: "Display time in ms, default 20000" },
+    display: {
+      type: "string",
+      enum: ["panel", "fullscreen"],
+      description: "panel for quick answers (default, except tables); fullscreen for things the user will keep working on (default for tables)",
+    },
+    ttlMs: { type: "integer", description: "Display time in ms; default 20000 (panel) or 0 (fullscreen); 0 = until closed" },
     body: { type: "string", description: "card: main text" },
     subtitle: { type: "string" },
     imageUrl: { type: "string" },
@@ -105,20 +132,35 @@ export const SHOW_UI_PARAMETERS = {
       },
     },
     text: { type: "string", description: "status: one-line text" },
+    columns: {
+      type: "array",
+      description: "table: column headers",
+      items: {
+        type: "object",
+        properties: { label: { type: "string" }, align: { type: "string", enum: ["start", "end"] } },
+        required: ["label"],
+      },
+    },
+    rows: { type: "array", description: "table: rows of cell strings", items: { type: "array", items: { type: "string" } } },
+    footer: { type: "array", description: "table: totals row", items: { type: "string" } },
+    note: { type: "string", description: "table: small print, e.g. assumptions" },
     progress: { type: "number", minimum: 0, maximum: 1 },
   },
   required: ["kind"],
 } as const;
 
-/** Light validation of model-produced UI. Returns null if unusable. */
-export function normalizeUi(raw: unknown, id: string): UiMessage | null {
+/** Light validation of model-produced UI. Returns null if unusable. `fallbackId` is used when the model gave none. */
+export function normalizeUi(raw: unknown, fallbackId: string): UiMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
+  // Tables are usually built on over several turns, so they default to a persistent full screen.
+  const display: Display = r.display === "fullscreen" || r.display === "panel" ? r.display : r.kind === "table" ? "fullscreen" : "panel";
   const base = {
     v: UI_SCHEMA_VERSION,
-    id,
+    id: typeof r.id === "string" && r.id.trim() ? r.id.trim().slice(0, 64) : fallbackId,
     title: typeof r.title === "string" ? r.title : undefined,
-    ttlMs: typeof r.ttlMs === "number" ? r.ttlMs : 20_000,
+    ttlMs: typeof r.ttlMs === "number" ? Math.max(0, r.ttlMs) : display === "fullscreen" ? 0 : 20_000,
+    display,
   };
   switch (r.kind) {
     case "card":
@@ -146,6 +188,20 @@ export function normalizeUi(raw: unknown, id: string): UiMessage | null {
       };
     case "status":
       return { ...base, kind: "status", text: String(r.text ?? r.body ?? ""), tone: tone(r.tone), progress: typeof r.progress === "number" ? r.progress : undefined };
+    case "table": {
+      const columns = Array.isArray(r.columns)
+        ? r.columns.map((c: any) => (typeof c === "string" ? { label: c } : { label: String(c?.label ?? ""), align: c?.align === "end" ? ("end" as const) : undefined }))
+        : [];
+      const cells = (row: unknown) => (Array.isArray(row) ? row.map((c) => (c == null ? "" : String(c))) : []);
+      return {
+        ...base,
+        kind: "table",
+        columns,
+        rows: Array.isArray(r.rows) ? r.rows.map(cells) : [],
+        footer: Array.isArray(r.footer) ? cells(r.footer) : undefined,
+        note: str(r.note),
+      };
+    }
     default:
       return null;
   }

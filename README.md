@@ -92,11 +92,21 @@ Source of truth: [`shared/src/protocol.ts`](shared/src/protocol.ts) and [`shared
 | `auth_required` | `url` | Executor OAuth needed; the tablet posts a tap-to-sign-in notification |
 | `error` | `message` | |
 
-**UiMessage v1:** fields common to all kinds are `{v:1, id, title?, ttlMs?}`, plus one of the following. `ttlMs` defaults to 20 s, and 0 means stay until dismissed.
+**UiMessage v1:** fields common to all kinds are `{v:1, id, title?, ttlMs?, display?}`, plus one of the following.
 - `card`: `body, subtitle?, imageUrl?, tone?`
 - `list`: `items[{title, subtitle?, trailing?}]`
 - `chart`: `chartType bar|line, unit?, series[{label, points[{x, y}]}]`
 - `status`: `text, tone?, progress? 0..1`
+- `table`: `columns[{label, align?}], rows[[cell…]], footer?` (a totals row), `note?`
+
+**Display modes:**
+- **`display: "panel"`** (the default, except for tables): the UI goes inside the assistant panel over the current app and fades after `ttlMs`, 20 s by default.
+- **`display: "fullscreen"`** (the default for tables): the UI takes over the screen and stays until it's closed or replaced (`ttlMs` 0). The conversation shows as a strip underneath.
+- **Locked or sleeping screen:** UI always goes full screen, because overlays can't show there.
+
+**Ids and building across turns:** a UI with an existing `id` replaces that screen in place, which is how the agent builds on a screen over several turns, such as a running carb table.
+- **What the agent sees:** it gets an "On screen now" note with the full content of every open screen, so it can extend one even after older turns have been trimmed from history.
+- **Closing:** `close_ui` closes screens (server message `dismiss_ui`). The device reports closing a screen itself, by the ✕ button, Back or a timeout, as `ui_event {action: "dismissed"}`.
 
 `tone` is one of `neutral|info|success|warning|error`.
 
@@ -201,6 +211,11 @@ On the tablet:
 
 The default wake word is **"Hey Jarvis"**. Use **Test overlay** to check the UI path.
 
+**What you see during a conversation:**
+- **Assistant panel:** a compact panel slides up over whatever app is in front. It shows the conversation (live transcript, replies as they're spoken) and any panel UI. It stays about 12 s after the session ends, longer if it holds UI.
+- **Full-screen view:** shows full-screen UI with the conversation underneath and a ✕ to close. While a full-screen screen is open, the conversation is kept across sessions.
+- **Where the panel can't appear:** Android hides third-party overlays over Settings and permission dialogs.
+
 ### Emulator (no microphone needed)
 
 There's a Pixel Tablet AVD (`HomeVoice_Tablet`, API 35, x86_64). The emulator can't use host audio here (its Pulse driver fails to start), so debug builds take speech through `adb` instead.
@@ -228,7 +243,8 @@ These are known gaps, in rough priority order:
 - [ ] Silero VAD on mic audio to drop words Flux invents from noise (voice-spike `adapters/vad.ts`).
 - [ ] Drop the wake word from a turn by Flux word timings rather than a regex. Today, when Flux merges it into the question, a mishearing such as "HRV" can get through.
 - [ ] Speculative LLM start on `EagerEndOfTurn`.
-- [ ] Show y-axis values on charts.
+- [ ] One session (the third in a row, started ~4 s after the previous one ended) produced partial transcripts but no final turn, and the retry worked. Logging was added on both sides to catch it next time.
+- [ ] Nutrition values vary between runs (banana came out at 20, 22 or 23 g of carbs per 100 g). For consistent tracking, give the agent a food database tool through Executor instead of model memory.
 - [ ] Code-level confirmation gate for mutating tools, on top of the prompt policy.
 - [ ] Feed `ui_event` taps back into the conversation. Load images in cards.
 - [ ] Compare `USAGE_ASSISTANT` and `USAGE_VOICE_COMMUNICATION` playback for AEC quality.

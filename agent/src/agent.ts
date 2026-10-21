@@ -7,6 +7,7 @@ import {
   type AgentState,
   type ClientMessage,
   type ServerMessage,
+  type UiMessage,
 } from "@home-voice/shared";
 import type { Env } from "./env";
 import { FluxStt, type FluxEvent } from "./stt";
@@ -21,6 +22,8 @@ const MAX_TOOL_ROUNDS = 5;
 const HISTORY_TURNS = 12;
 const HISTORY_IDLE_RESET_MS = 10 * 60_000;
 const PREAMBLE = "Let me check.";
+/** Tools that only draw on the device: no preamble, and a reply that already spoke needn't go round again. */
+const UI_TOOLS = new Set(["show_ui", "close_ui"]);
 /** A short turn ending this soon after a wake-word barge-in is the wake word itself (Flux may hear "Hey Jarvis" as "HRV"). */
 const WAKE_ECHO_MS = 4_000;
 const WAKE_PREFIX = /^\s*(hey|hi|okay|ok)[,\s]+jarvis\b[,.!?\s]*/i;
@@ -58,6 +61,8 @@ export class VoiceAgent extends Agent<Env, State> {
   /** A reply cut off by barge-in, until we know how much of it was heard (see settleInterrupted). */
   private interrupted: { turn: Turn; at: number } | null = null;
   private aura: AuraTts | null = null;
+  /** What's on the device screen now, by id, so the model can build on it (persisted with history). */
+  private surfaces = new Map<string, UiMessage>();
   private agentState: AgentState = "idle";
   private wakeHeardAt = 0;
 
@@ -126,8 +131,9 @@ export class VoiceAgent extends Agent<Env, State> {
         if (msg.text?.trim()) void this.runTurn(msg.text.trim());
         break;
       case "ui_event":
-        // TODO: feed UI taps into the conversation (e.g. as a user message "[tapped X]").
-        console.log("ui_event", msg);
+        // The device closed a screen (tap or ttl): keep our idea of the screen in sync.
+        if (msg.action === "dismissed" && this.surfaces.delete(msg.uiId)) void this.saveHistory();
+        // TODO: feed other UI taps into the conversation (e.g. as a user message "[tapped X]").
         break;
       case "ping":
         this.send({ type: "pong" });
@@ -197,8 +203,17 @@ export class VoiceAgent extends Agent<Env, State> {
         type: "function",
         function: {
           name: "show_ui",
-          description: "Show a card, list, chart or status on the tablet screen alongside your spoken reply.",
+          description:
+            "Show a card, list, table, chart or status on the tablet alongside your spoken reply. Reusing an id replaces that screen.",
           parameters: SHOW_UI_PARAMETERS,
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "close_ui",
+          description: "Close a screen (by id), or all screens if no id is given.",
+          parameters: { type: "object", properties: { id: { type: "string" } } },
         },
       },
     ];
@@ -212,10 +227,19 @@ export class VoiceAgent extends Agent<Env, State> {
       return JSON.stringify({ error: "arguments were not valid JSON" });
     }
     if (name === "show_ui") {
-      const ui = normalizeUi(args, crypto.randomUUID());
+      const ui = normalizeUi(args, `ui-${crypto.randomUUID().slice(0, 6)}`);
       if (!ui) return JSON.stringify({ error: "invalid ui" });
+      const replaced = this.surfaces.has(ui.id);
+      this.surfaces.set(ui.id, ui);
       this.send({ type: "ui", ui });
-      return JSON.stringify({ shown: true });
+      return JSON.stringify({ shown: true, id: ui.id, replaced });
+    }
+    if (name === "close_ui") {
+      const id = typeof args.id === "string" ? args.id : undefined;
+      if (id) this.surfaces.delete(id);
+      else this.surfaces.clear();
+      this.send({ type: "dismiss_ui", uiId: id });
+      return JSON.stringify({ closed: id ?? "all" });
     }
     const serverId = this.executorId();
     if (!serverId) return JSON.stringify({ error: "Executor is not connected" });
@@ -242,6 +266,7 @@ export class VoiceAgent extends Agent<Env, State> {
   }
 
   private async startSession() {
+    console.log("session start", { sttOpen: !!this.stt?.isOpen });
     this.auraFor().warm(); // opening an Aura socket costs ~0.5 s; do it while the user speaks
     if (!this.stt) {
       const stt: FluxStt = new FluxStt(this.env, {
@@ -278,7 +303,10 @@ export class VoiceAgent extends Agent<Env, State> {
       case "EndOfTurn": {
         const words = text.replace(WAKE_PREFIX, "").trim();
         const wakeEcho = Date.now() - this.wakeHeardAt < WAKE_ECHO_MS && text.split(/\s+/).length <= 3;
-        if (!words || wakeEcho) return; // the interruption itself, not a request
+        if (!words || wakeEcho) {
+          console.log("turn dropped", { text, wakeEcho }); // the interruption itself, not a request
+          return;
+        }
         this.send({ type: "transcript", text: words, final: true });
         void this.runTurn(words);
         break;
@@ -377,14 +405,14 @@ export class VoiceAgent extends Agent<Env, State> {
 
     try {
       const tools = this.toolDefs();
-      const executor = tools.some((t) => t.function.name !== "show_ui");
+      const executor = tools.some((t) => !UI_TOOLS.has(t.function.name));
       for (let round = 0; round <= MAX_TOOL_ROUNDS && !signal.aborted; round++) {
         const chunker = new SentenceChunker();
         // Static instructions first (a cacheable prefix), the time last.
         const messages: ChatMessage[] = [
           { role: "system", content: systemPrompt({ executor }) },
           ...this.history,
-          { role: "system", content: clockNote(new Date()) },
+          { role: "system", content: [clockNote(new Date()), this.screenNote()].filter(Boolean).join("\n") },
         ];
         const { text, toolCalls } = await streamChat(
           this.env,
@@ -402,7 +430,7 @@ export class VoiceAgent extends Agent<Env, State> {
           break;
         }
         // Spoken preamble before tools, if the model didn't produce one itself.
-        if (!text.trim() && round === 0 && toolCalls.some((c) => c.function.name !== "show_ui")) say(PREAMBLE);
+        if (!text.trim() && round === 0 && toolCalls.some((c) => !UI_TOOLS.has(c.function.name))) say(PREAMBLE);
 
         this.history.push({ role: "assistant", content: text || null, tool_calls: toolCalls });
         for (const call of toolCalls) {
@@ -411,7 +439,7 @@ export class VoiceAgent extends Agent<Env, State> {
           this.history.push({ role: "tool", tool_call_id: call.id, content });
         }
         // Spoke and only drew on screen: nothing left to say, so skip another LLM round trip.
-        if (text.trim() && toolCalls.every((c) => c.function.name === "show_ui")) break;
+        if (text.trim() && toolCalls.every((c) => UI_TOOLS.has(c.function.name))) break;
       }
       await turn.tts.drain();
       if (!signal.aborted && turn.tts.started) this.send({ type: "tts_end", turnId: turn.id });
@@ -434,17 +462,27 @@ export class VoiceAgent extends Agent<Env, State> {
   }
 
   private saveHistory() {
-    return this.ctx.storage.put("history", { at: this.lastTurnAt, messages: this.history });
+    return this.ctx.storage.put("history", { at: this.lastTurnAt, messages: this.history, surfaces: [...this.surfaces.values()] });
+  }
+
+  /** What's on screen, in full, so the model can extend it even after older turns are trimmed. */
+  private screenNote(): string {
+    if (!this.surfaces.size) return "";
+    const shown = [...this.surfaces.values()].map(({ v: _v, ...ui }) => ui);
+    let json = JSON.stringify(shown);
+    if (json.length > 6000) json = json.slice(0, 6000) + "…";
+    return `On screen now (show_ui with the same id replaces one): ${json}`;
   }
 
   private historyLoaded = false;
   private async loadHistory() {
     if (this.historyLoaded) return;
     this.historyLoaded = true;
-    const saved = await this.ctx.storage.get<{ at: number; messages: ChatMessage[] }>("history");
+    const saved = await this.ctx.storage.get<{ at: number; messages: ChatMessage[]; surfaces?: UiMessage[] }>("history");
     if (saved) {
       this.history = saved.messages;
       this.lastTurnAt = saved.at;
+      this.surfaces = new Map((saved.surfaces ?? []).map((u) => [u.id, u]));
     }
   }
 

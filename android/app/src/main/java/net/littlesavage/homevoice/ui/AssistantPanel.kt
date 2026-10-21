@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -39,36 +40,28 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
 import net.littlesavage.homevoice.protocol.UiMessage
 
-/** What the assistant panel shows for the current exchange. */
-data class Exchange(
-    val state: String = "listening", // listening | thinking | speaking
-    val user: String = "",
-    val userFinal: Boolean = false,
-    val reply: String = "",
-    val replyTurnId: String? = null,
-    val ui: UiMessage? = null,
-)
-
 /**
- * A compact panel at the bottom of the screen, over whatever app is in front: live transcript,
- * the reply as it's spoken, and any agent UI. Needs "Display over other apps"; it never takes
- * focus or touches outside itself, so the app underneath keeps working. Overlay windows can't
- * show on the lock screen, so when the screen is off/locked agent UI goes to [OverlayActivity].
+ * A compact panel at the bottom of the screen, over whatever app is in front: the conversation so
+ * far (live transcript, replies as they're spoken) and any panel UI. Needs "Display over other
+ * apps"; it never takes focus or touches outside itself. Android hides third-party overlays over
+ * Settings and permission dialogs, and they can't show on the lock screen (full screen covers that).
  */
 class AssistantPanel(private val context: Context) {
-    private val _exchange = MutableStateFlow<Exchange?>(null)
-    val exchange: StateFlow<Exchange?> = _exchange
-
+    private val visible = MutableStateFlow(false)
     private val wm = context.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private var view: ComposeView? = null
     private var owner: OverlayOwner? = null
-    private val hide = Runnable { _exchange.value = null; main.postDelayed({ detach() }, 400) }
+    private val hide = Runnable {
+        visible.value = false
+        // A full-screen screen (e.g. a running table) keeps its conversation until it's closed.
+        if (UiBus.fullscreen.value == null) Conversation.clear()
+        main.postDelayed({ detach() }, 400)
+    }
 
     /** Overlay possible right now (permission granted, screen on and unlocked). */
     fun canShow(): Boolean {
@@ -77,27 +70,30 @@ class AssistantPanel(private val context: Context) {
         return android.provider.Settings.canDrawOverlays(context) && pm.isInteractive && !km.isKeyguardLocked
     }
 
-    fun start() = main.post {
+    /** Show (or keep showing) the panel. */
+    fun show() = main.post {
         main.removeCallbacks(hide)
-        _exchange.value = Exchange()
-        if (canShow()) attach()
-    }
-
-    fun update(f: (Exchange) -> Exchange) = main.post {
-        main.removeCallbacks(hide)
-        _exchange.update { it?.let(f) ?: f(Exchange()) }
+        visible.value = true
         if (view == null && canShow()) attach()
     }
 
-    /** Session over: linger long enough to read the reply (or the UI's ttl). */
+    /** Session over: linger so the conversation can be read, longer if UI is up. */
     fun finish() = main.post {
-        val ui = _exchange.value?.ui
-        val linger = if (ui != null) (ui.ttlMs ?: 20_000L).coerceIn(4_000L, 30_000L) else 5_000L
+        val ui = UiBus.panel.value
+        val linger = when {
+            ui == null -> LINGER_MS
+            ui.ttlMs == 0L -> Long.MAX_VALUE // persistent panel UI: until closed
+            else -> maxOf(LINGER_MS, ui.ttlMs ?: 20_000L)
+        }
         main.removeCallbacks(hide)
-        main.postDelayed(hide, linger)
+        if (linger != Long.MAX_VALUE) main.postDelayed(hide, linger)
     }
 
-    fun dismiss() = main.post { main.removeCallbacks(hide); hide.run() }
+    fun dismiss() = main.post {
+        UiBus.panel.value?.let { UiBus.closeLocally(it) }
+        main.removeCallbacks(hide)
+        hide.run()
+    }
 
     private fun attach() {
         if (view != null) return
@@ -105,7 +101,7 @@ class AssistantPanel(private val context: Context) {
         val v = ComposeView(context).apply {
             setViewTreeLifecycleOwner(o)
             setViewTreeSavedStateRegistryOwner(o)
-            setContent { PanelHost(exchange, onDismiss = { dismiss() }) }
+            setContent { PanelHost(visible, onDismiss = { dismiss() }) }
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -118,32 +114,36 @@ class AssistantPanel(private val context: Context) {
     }
 
     private fun detach() {
-        if (_exchange.value != null) return
+        if (visible.value) return
         view?.let { runCatching { wm.removeView(it) } }
         owner?.destroy()
         view = null
         owner = null
     }
+
+    companion object {
+        const val LINGER_MS = 12_000L
+    }
 }
 
 @Composable
-private fun PanelHost(exchange: StateFlow<Exchange?>, onDismiss: () -> Unit) {
-    val ex by exchange.collectAsState()
-    var last by remember { mutableStateOf<Exchange?>(null) }
-    if (ex != null) last = ex
+private fun PanelHost(visible: MutableStateFlow<Boolean>, onDismiss: () -> Unit) {
+    val shown by visible.collectAsState()
+    val convo by Conversation.state.collectAsState()
+    val ui by UiBus.panel.collectAsState()
+    val fullscreen by UiBus.fullscreenVisible.collectAsState()
+    // With a full-screen view up, the conversation is shown there; the panel only appears for its own UI.
+    val show = shown && (!fullscreen || ui != null) && (convo.turns.isNotEmpty() || convo.active || ui != null)
+    ui?.let { u -> LaunchedEffect(u) { val ttl = u.ttlMs ?: 20_000L; if (ttl > 0) { delay(ttl); UiBus.closeLocally(u) } } }
     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.BottomCenter) {
-        AnimatedVisibility(
-            visible = ex != null,
-            enter = slideInVertically { it / 2 } + fadeIn(),
-            exit = slideOutVertically { it / 2 } + fadeOut(),
-        ) {
-            last?.let { Panel(it, onDismiss) }
+        AnimatedVisibility(visible = show, enter = slideInVertically { it / 2 } + fadeIn(), exit = slideOutVertically { it / 2 } + fadeOut()) {
+            Panel(convo, if (fullscreen) emptyList() else convo.turns, ui, onDismiss)
         }
     }
 }
 
 @Composable
-private fun Panel(ex: Exchange, onDismiss: () -> Unit) {
+private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, onDismiss: () -> Unit) {
     Column(
         Modifier
             .widthIn(max = 760.dp)
@@ -156,22 +156,9 @@ private fun Panel(ex: Exchange, onDismiss: () -> Unit) {
             .padding(horizontal = 28.dp, vertical = 22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StateDot(ex.state)
-            Text(
-                when (ex.state) { "thinking" -> "Thinking…"; "speaking" -> "Speaking"; else -> "Listening…" },
-                color = Color(0xFFB0B0B8), fontSize = 15.sp,
-            )
-        }
-        if (ex.user.isNotBlank()) {
-            Text(
-                ex.user, fontSize = 22.sp,
-                color = if (ex.userFinal) Color(0xFFE6E1E5) else Color(0xFF9A96A0),
-                fontStyle = if (ex.userFinal) FontStyle.Normal else FontStyle.Italic,
-            )
-        }
-        if (ex.reply.isNotBlank()) Text(ex.reply, fontSize = 22.sp, color = Color(0xFFD0BCFF))
-        ex.ui?.let {
+        StateLine(convo)
+        ConversationTurns(turns, maxTurns = if (ui != null) 1 else 3)
+        ui?.let {
             Box(Modifier.fillMaxWidth().background(Color(0xFF0E0E10), RoundedCornerShape(18.dp)).padding(20.dp)) {
                 UiView(it, scale = 0.6f)
             }
@@ -179,14 +166,48 @@ private fun Panel(ex: Exchange, onDismiss: () -> Unit) {
     }
 }
 
+/** Status dot + label; "Done" once the session has ended (the panel is lingering). */
+@Composable
+fun StateLine(convo: ConversationState) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        StateDot(if (convo.active) convo.state else "done")
+        Text(
+            if (!convo.active) "Say \"Hey Jarvis\" to continue"
+            else when (convo.state) { "thinking" -> "Thinking…"; "speaking" -> "Speaking"; else -> "Listening…" },
+            color = Color(0xFFB0B0B8), fontSize = 15.sp,
+        )
+    }
+}
+
+/** The last few turns; older ones dimmed. */
+@Composable
+fun ConversationTurns(turns: List<Turn>, maxTurns: Int, textSize: Int = 22) {
+    val shown = turns.takeLast(maxTurns)
+    shown.forEachIndexed { i, t ->
+        val dim = if (i < shown.size - 1) 0.55f else 1f
+        Column(Modifier.alpha(dim), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (t.user.isNotBlank()) {
+                Text(
+                    t.user, fontSize = textSize.sp,
+                    color = if (t.userFinal) Color(0xFFE6E1E5) else Color(0xFF9A96A0),
+                    fontStyle = if (t.userFinal) FontStyle.Normal else FontStyle.Italic,
+                )
+            }
+            if (t.reply.isNotBlank()) Text(t.reply.trim(), fontSize = textSize.sp, color = Color(0xFFD0BCFF))
+        }
+    }
+}
+
 @Composable
 private fun StateDot(state: String) {
-    val color = when (state) { "thinking" -> Color(0xFFFFB74D); "speaking" -> Color(0xFFD0BCFF); else -> Color(0xFF4FC3F7) }
+    val color = when (state) {
+        "thinking" -> Color(0xFFFFB74D); "speaking" -> Color(0xFFD0BCFF); "done" -> Color(0xFF6B6870); else -> Color(0xFF4FC3F7)
+    }
     val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
         initialValue = 0.7f, targetValue = 1.15f, label = "dot",
         animationSpec = infiniteRepeatable(tween(if (state == "thinking") 400 else 700), RepeatMode.Reverse),
     )
-    Box(Modifier.size(14.dp).scale(pulse).background(color, CircleShape))
+    Box(Modifier.size(14.dp).scale(if (state == "done") 1f else pulse).background(color, CircleShape))
 }
 
 /** Lifecycle + saved state for a ComposeView that lives in a window owned by a service. */

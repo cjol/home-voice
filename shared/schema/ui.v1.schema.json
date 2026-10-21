@@ -1,24 +1,37 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "home-voice/ui/v1",
-  "title": "UiMessage v1 (fields the agent may set; v and id are added by the agent)",
+  "title": "UiMessage v1 (fields the agent may set; v is added by the agent)",
   "type": "object",
   "properties": {
+    "id": {
+      "type": "string",
+      "description": "Short stable id, e.g. \"carbs\". Reuse it to replace that screen in place (resend the full content)."
+    },
     "kind": {
       "type": "string",
       "enum": [
         "card",
         "list",
         "chart",
-        "status"
+        "status",
+        "table"
       ]
     },
     "title": {
       "type": "string"
     },
+    "display": {
+      "type": "string",
+      "enum": [
+        "panel",
+        "fullscreen"
+      ],
+      "description": "panel for quick answers (default, except tables); fullscreen for things the user will keep working on (default for tables)"
+    },
     "ttlMs": {
       "type": "integer",
-      "description": "Display time in ms, default 20000"
+      "description": "Display time in ms; default 20000 (panel) or 0 (fullscreen); 0 = until closed"
     },
     "body": {
       "type": "string",
@@ -108,6 +121,49 @@
     "text": {
       "type": "string",
       "description": "status: one-line text"
+    },
+    "columns": {
+      "type": "array",
+      "description": "table: column headers",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "align": {
+            "type": "string",
+            "enum": [
+              "start",
+              "end"
+            ]
+          }
+        },
+        "required": [
+          "label"
+        ]
+      }
+    },
+    "rows": {
+      "type": "array",
+      "description": "table: rows of cell strings",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "footer": {
+      "type": "array",
+      "description": "table: totals row",
+      "items": {
+        "type": "string"
+      }
+    },
+    "note": {
+      "type": "string",
+      "description": "table: small print, e.g. assumptions"
     },
     "progress": {
       "type": "number",

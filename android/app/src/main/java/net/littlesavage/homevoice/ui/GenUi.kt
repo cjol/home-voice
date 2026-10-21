@@ -2,6 +2,9 @@ package net.littlesavage.homevoice.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,6 +17,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +55,7 @@ fun UiView(ui: UiMessage, modifier: Modifier = Modifier, scale: Float = 1f) {
                 ui.progress?.let { LinearProgressIndicator(progress = { it.toFloat() }, modifier = Modifier.fillMaxWidth()) }
             }
             is UiMessage.Chart -> ChartView(ui, scale)
+            is UiMessage.Table -> TableView(ui, scale)
         }
     }
 }
@@ -99,6 +104,38 @@ private fun ChartView(ui: UiMessage.Chart, scale: Float) {
         }
         val legend = listOfNotNull(ui.unit, ui.series.takeIf { it.size > 1 }?.joinToString("  ·  ") { it.label })
         if (legend.isNotEmpty()) Text(legend.joinToString("   "), color = Color.Gray, fontSize = (14 * scale).sp)
+    }
+}
+
+@Composable
+private fun TableView(ui: UiMessage.Table, scale: Float) {
+    val n = ui.columns.size.coerceAtLeast(ui.rows.maxOfOrNull { it.size } ?: 1)
+    // First column (labels) gets more room than the numeric ones.
+    val weights = List(n) { if (it == 0) 2f else 1f }
+    val endAligned = { i: Int -> ui.columns.getOrNull(i)?.align == "end" }
+    @Composable
+    fun RowOf(cells: List<String>, color: Color, size: Int, weight: FontWeight = FontWeight.Normal, bg: Color = Color.Transparent) {
+        Row(
+            Modifier.fillMaxWidth().background(bg, RoundedCornerShape((8 * scale).dp)).padding(vertical = (10 * scale).dp, horizontal = (12 * scale).dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (i in 0 until n) {
+                Text(
+                    cells.getOrElse(i) { "" }, Modifier.weight(weights[i]), color = color, fontSize = (size * scale).sp,
+                    fontWeight = weight, textAlign = if (endAligned(i)) TextAlign.End else TextAlign.Start,
+                )
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy((2 * scale).dp)) {
+        RowOf(ui.columns.map { it.label }, Color(0xFFB0B0B8), 18, FontWeight.Medium)
+        HorizontalDivider(color = Color(0x33FFFFFF))
+        ui.rows.forEachIndexed { i, r -> RowOf(r, Color.White, 26, bg = if (i % 2 == 1) Color(0x0FFFFFFF) else Color.Transparent) }
+        ui.footer?.let {
+            HorizontalDivider(color = Color(0x66FFFFFF))
+            RowOf(it, Color(0xFFD0BCFF), 28, FontWeight.SemiBold)
+        }
+        ui.note?.let { Text(it, color = Color.Gray, fontSize = (15 * scale).sp, modifier = Modifier.padding(top = (8 * scale).dp)) }
     }
 }
 
