@@ -242,7 +242,16 @@ class VoiceService : LifecycleService() {
         deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
         if (sendStart) c.send(ClientMessage.StartSession(wakeWord = "hey_jarvis"))
         Conversation.begin()
-        panel.show()
+        if (panel.canShow()) {
+            panel.show()
+        } else {
+            // Application overlays are hidden by the keyguard. Start the lock-screen
+            // capable activity immediately, even when the agent hasn't sent a card.
+            UiBus.panel.value?.let { UiBus.showFullscreen(it) }
+            ContextCompat.getMainExecutor(this).execute {
+                OverlayActivity.bringToFront(this, "Home Voice")
+            }
+        }
         publish { it.copy(mode = "in conversation") }
         updateNotification("Listening…")
     }
@@ -289,6 +298,7 @@ class VoiceService : LifecycleService() {
                 is ServerMessage.TtsStart -> {
                     Log.i(TAG, "tts start")
                     agentState = "speaking"
+                    if (inSession) Conversation.setState("speaking")
                     replyTurnId = msg.turnId
                     player?.begin(msg.sampleRate)
                 }

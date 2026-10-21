@@ -10,7 +10,11 @@ import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.ui.res.painterResource
+import net.littlesavage.homevoice.R
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -157,15 +161,14 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            ConversationControls(convo, onEnd = onDismiss)
-        }
+        StateLine(convo)
         Transcript(turns, maxTurns = if (ui != null) 1 else 3, modifier = Modifier.weight(1f, fill = false))
         ui?.let {
             Box(Modifier.fillMaxWidth().background(Color(0xFF0E0E10), RoundedCornerShape(18.dp)).padding(20.dp)) {
                 UiView(it, scale = 0.6f)
             }
         }
+        ConversationControls(convo, onEnd = onDismiss)
     }
 }
 
@@ -182,18 +185,22 @@ fun StateLine(convo: ConversationState) {
     }
 }
 
-/** Stable controls: stopping speech and ending listening are separate actions. */
+/** One bottom action: stop speech first, then end the listening session on the next tap. */
 @Composable
 fun ConversationControls(convo: ConversationState, onEnd: () -> Unit = { UiBus.onConversationClosed?.invoke() }) {
-    Column(Modifier.fillMaxWidth()) {
-        StateLine(convo)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = { UiBus.onInterrupt?.invoke() }) {
-                Text("Stop reply", color = Color(0xFFD0BCFF))
-            }
-            TextButton(onClick = onEnd, enabled = convo.active) {
-                Text("End conversation", color = if (convo.active) Color(0xFFD0BCFF) else Color.Gray)
-            }
+    val speaking = convo.active && convo.state == "speaking"
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        FilledTonalIconButton(
+            onClick = { if (speaking) UiBus.onInterrupt?.invoke() else onEnd() },
+            modifier = Modifier.size(48.dp),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = Color(0xFF494354), contentColor = Color(0xFFEADDFF),
+            ),
+        ) {
+            Icon(
+                painterResource(if (speaking) R.drawable.ic_stop_reply else R.drawable.ic_end_conversation),
+                contentDescription = if (speaking) "Stop reply" else "End conversation",
+            )
         }
     }
 }

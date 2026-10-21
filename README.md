@@ -269,7 +269,7 @@ Native-library alignment check after building: `python3 android/scripts/check-na
 
 ### Transcript controls and screen reconciliation
 
-Both transcript views have a persistent **Stop reply** button, which cancels speech and opens a follow-up listening window, and **End conversation**, which stops speech and follow-up listening. In full-screen mode, ending the conversation leaves the table open. The table's **✕** closes the table and ends listening. The transcript follows new content after layout without animating its scroll position.
+Both transcript views have one icon at the bottom: a stop square while speaking (cancels speech and opens a follow-up listening window), otherwise a crossed conversation bubble (ends the conversation and follow-up listening). Ending the conversation during speech takes two taps. In full-screen mode, ending the conversation leaves the table open. The table's **✕** closes the table and ends listening. The transcript follows new content after layout without animating its scroll position.
 
 The tablet reports `ui_state {openIds}` on every connection, so tables closed while offline or lost on an app restart are removed from the agent's saved screen context. Dismiss events load persisted state before removing a screen, including after Durable Object hibernation. Each model request gets an authoritative screen-state note, including an explicit empty state when nothing is open.
 
@@ -279,3 +279,5 @@ mise exec -- node agent/scripts/screen-state.mjs seed
 mise exec -- npm run deploy -w agent  # evicts in-memory DO state
 mise exec -- node agent/scripts/screen-state.mjs verify
 ```
+
+The table activity keeps Android’s status and navigation bars visible. When the wake word fires with the screen off or locked, the same activity opens immediately with a transcript and the bottom action, even without a generated card. It displays above the keyguard without unlocking the device, and closes when a conversation-only session ends.

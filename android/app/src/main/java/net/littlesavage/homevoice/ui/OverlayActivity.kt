@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.delay
 import net.littlesavage.homevoice.R
 import net.littlesavage.homevoice.protocol.UiMessage
@@ -59,6 +61,14 @@ class OverlayActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            show(WindowInsetsCompat.Type.systemBars())
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
         getSystemService(NotificationManager::class.java).cancel(FSI_NOTIF_ID)
         setContent {
             val ui by UiBus.fullscreen.collectAsState()
@@ -66,31 +76,40 @@ class OverlayActivity : ComponentActivity() {
             val current = ui
             // Keyed on the content, so a replacement (same id, new rows) restarts the timer.
             LaunchedEffect(current) {
-                if (current == null) { finish(); return@LaunchedEffect }
-                val ttl = current.ttlMs ?: 0L
-                if (ttl > 0) { delay(ttl); UiBus.closeLocally(current) }
+                val ttl = current?.ttlMs ?: 0L
+                if (ttl > 0) { delay(ttl); current?.let { UiBus.closeLocally(it) } }
+            }
+            LaunchedEffect(current, convo.active) {
+                if (current == null && !convo.active) finish()
             }
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val compact = LocalConfiguration.current.screenWidthDp < 600
                 Column(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding().padding(if (compact) 12.dp else 24.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (current != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         // Explicit close: a stray tap shouldn't wipe a table you're building.
                         FilledTonalIconButton(onClick = { current?.let { UiBus.closeLocally(it) } }, modifier = Modifier.size(56.dp)) {
                             Text("✕", fontSize = 24.sp)
                         }
                     }
-                    Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
-                        current?.let { UiView(it, Modifier.widthIn(max = 1100.dp).fillMaxWidth(), scale = if (compact) 0.65f else 1f) }
+                    if (current != null) {
+                        Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
+                            UiView(current, Modifier.widthIn(max = 1100.dp).fillMaxWidth(), scale = if (compact) 0.65f else 1f)
+                        }
+                    } else {
+                        Text("Home Voice", color = Color.White, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = 12.dp))
                     }
                     if (convo.turns.isNotEmpty() || convo.active) {
                         Column(
-                            Modifier.fillMaxWidth().heightIn(max = if (compact) 260.dp else 340.dp).padding(top = 12.dp)
+                            Modifier.fillMaxWidth()
+                                .then(if (current == null) Modifier.weight(1f) else Modifier.heightIn(max = if (compact) 260.dp else 340.dp))
+                                .padding(top = 12.dp)
                                 .background(Color(0xFF1C1B1F), RoundedCornerShape(24.dp)).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            ConversationControls(convo)
+                            StateLine(convo)
                             Transcript(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20,
-                                modifier = Modifier.weight(1f, fill = false))
+                                modifier = Modifier.weight(1f, fill = current == null))
+                            ConversationControls(convo)
                         }
                     }
                 }
@@ -103,6 +122,9 @@ class OverlayActivity : ComponentActivity() {
 
     @Deprecated("Back closes the screen")
     override fun onBackPressed() {
-        UiBus.fullscreen.value?.let { UiBus.closeLocally(it) } ?: super.onBackPressed()
+        UiBus.fullscreen.value?.let { UiBus.closeLocally(it) } ?: run {
+            UiBus.onConversationClosed?.invoke()
+            super.onBackPressed()
+        }
     }
 }
