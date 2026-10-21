@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "home-voice/ui/v1",
+  "title": "UiMessage v1 (fields the agent may set; v and id are added by the agent)",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "card",
+        "list",
+        "chart",
+        "status"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "ttlMs": {
+      "type": "integer",
+      "description": "Display time in ms, default 20000"
+    },
+    "body": {
+      "type": "string",
+      "description": "card: main text"
+    },
+    "subtitle": {
+      "type": "string"
+    },
+    "imageUrl": {
+      "type": "string"
+    },
+    "tone": {
+      "type": "string",
+      "enum": [
+        "neutral",
+        "info",
+        "success",
+        "warning",
+        "error"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "description": "list: rows",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "trailing": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    "chartType": {
+      "type": "string",
+      "enum": [
+        "bar",
+        "line"
+      ]
+    },
+    "unit": {
+      "type": "string"
+    },
+    "series": {
+      "type": "array",
+      "description": "chart: data series",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "string"
+                },
+                "y": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          }
+        },
+        "required": [
+          "label",
+          "points"
+        ]
+      }
+    },
+    "text": {
+      "type": "string",
+      "description": "status: one-line text"
+    },
+    "progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "required": [
+    "kind"
+  ]
+}

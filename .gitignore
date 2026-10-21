@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env
+*.log
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+*.keystore
+*.jks
+# models are downloaded, not committed
+android/app/src/main/assets/wakeword/*.onnx
+android/app/src/main/assets/wakeword/*.tflite
+.DS_Store

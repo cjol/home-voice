@@ -1,0 +1,8 @@
+{
+  "name": "home-voice",
+  "private": true,
+  "workspaces": ["shared", "agent"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces"
+  }
+}
