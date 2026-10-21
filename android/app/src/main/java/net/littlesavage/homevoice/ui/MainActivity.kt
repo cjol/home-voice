@@ -1,0 +1,71 @@
+package net.littlesavage.homevoice.ui
+
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.os.PowerManager
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import net.littlesavage.homevoice.Settings
+import net.littlesavage.homevoice.protocol.UiMessage
+import net.littlesavage.homevoice.service.VoiceService
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val settings = Settings(this)
+        setContent { MaterialTheme(colorScheme = darkColorScheme()) { Surface { SettingsScreen(settings) } } }
+    }
+
+    @Composable
+    private fun SettingsScreen(settings: Settings) {
+        var url by remember { mutableStateOf(settings.serverUrl) }
+        var token by remember { mutableStateOf(settings.token) }
+        val status by VoiceService.status.collectAsState()
+        val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
+        Column(Modifier.fillMaxSize().padding(32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Home Voice", style = MaterialTheme.typography.headlineLarge)
+            Text("Device id: ${settings.deviceId}")
+            OutlinedTextField(url, { url = it }, label = { Text("Agent URL (https://home-voice-agent.<sub>.workers.dev)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(token, { token = it }, label = { Text("Device token") }, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = {
+                    settings.serverUrl = url; settings.token = token; settings.enabled = true
+                    perms.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS))
+                    VoiceService.stop(this@MainActivity); VoiceService.start(this@MainActivity)
+                }) { Text("Save & start") }
+                OutlinedButton(onClick = { settings.enabled = false; VoiceService.stop(this@MainActivity) }) { Text("Stop") }
+            }
+            HorizontalDivider()
+            Text("Permissions for background use", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }) { Text(if (android.provider.Settings.canDrawOverlays(this@MainActivity)) "Display over other apps: granted" else "Grant 'Display over other apps'") }
+            val pm = getSystemService(PowerManager::class.java)
+            OutlinedButton(onClick = {
+                startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            }) { Text(if (pm.isIgnoringBatteryOptimizations(packageName)) "Battery optimisation: off" else "Disable battery optimisation") }
+            OutlinedButton(onClick = {
+                UiBus.show(UiMessage.Card(id = "test", title = "Test card", body = "Overlay rendering works.", ttlMs = 5000))
+                OverlayActivity.bringToFront(this@MainActivity, "Test")
+            }) { Text("Test overlay") }
+            HorizontalDivider()
+            Text("Status", style = MaterialTheme.typography.titleMedium)
+            Text("Connected: ${status.connected}   Mode: ${status.mode}   Agent: ${status.agent}")
+            Text("Wake score: ${"%.2f".format(status.wakeScore)}")
+            Text("You: ${status.lastTranscript}")
+            Text("Assistant: ${status.lastReply}")
+        }
+    }
+}
