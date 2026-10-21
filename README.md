@@ -262,3 +262,7 @@ TTS regression checks (from the repository root):
 agent/node_modules/wrangler/node_modules/esbuild/bin/esbuild agent/src/tts.test.ts --bundle --platform=node --format=esm --outfile=/tmp/homevoice-tts-test.mjs
 mise exec -- node --test /tmp/homevoice-tts-test.mjs
 ```
+
+Open screen contents are persisted separately from conversation messages and supplied to every model turn, with no time or turn-count expiry. This includes tables even after the 10-minute history reset. Closing a screen removes this separate context. The combined screen note is capped at 6,000 characters, so very large screens may be truncated.
+
+Native-library alignment check after building: `python3 android/scripts/check-native-alignment.py android/app/build/outputs/apk/debug/app-debug.apk`. ONNX Runtime 1.23.0 replaces the older JNI library that triggered Android’s 16 KB compatibility warning.
