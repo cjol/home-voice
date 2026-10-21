@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import net.littlesavage.homevoice.Settings
 import net.littlesavage.homevoice.service.VoiceService
+import net.littlesavage.homevoice.ui.StartActivity
 
 /**
  * Debug-only adb control (not in release builds). See android/scripts/emu.sh.
@@ -23,7 +24,8 @@ class DebugReceiver : BroadcastReceiver() {
                 intent.getStringExtra("token")?.let { s.token = it }
                 s.enabled = true
                 VoiceService.stop(context)
-                VoiceService.start(context)
+                // A mic service must be started from the foreground: go through the invisible StartActivity.
+                context.startActivity(Intent(context, StartActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
             "net.littlesavage.homevoice.debug.SAY" -> intent.getStringExtra("text")?.let { VoiceService.sendText(context, it) }
             "net.littlesavage.homevoice.debug.INJECT" -> intent.getStringExtra("path")?.let { VoiceService.injectPcm(context, it) }

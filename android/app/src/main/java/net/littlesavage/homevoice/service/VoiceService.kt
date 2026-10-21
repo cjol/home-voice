@@ -31,6 +31,7 @@ import net.littlesavage.homevoice.ui.AssistantPanel
 import net.littlesavage.homevoice.ui.Conversation
 import net.littlesavage.homevoice.ui.MainActivity
 import net.littlesavage.homevoice.ui.OverlayActivity
+import net.littlesavage.homevoice.ui.StartActivity
 import net.littlesavage.homevoice.ui.UiBus
 import net.littlesavage.homevoice.wakeword.OpenWakeWord
 
@@ -106,7 +107,16 @@ class VoiceService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        ServiceCompat.startForeground(this, NOTIF_ID, notification("Starting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        try {
+            ServiceCompat.startForeground(this, NOTIF_ID, notification("Starting…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } catch (e: Exception) {
+            // Android 14+ refuses a microphone FGS started from the background (e.g. a START_STICKY
+            // restart after the process was killed). Re-launch from a visible activity instead.
+            Log.w(TAG, "can't start mic service from background: ${e.message}")
+            resumeFromForeground()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (mic == null) startPipeline()
         when (intent?.action) {
             ACTION_TEXT -> intent.getStringExtra("text")?.takeIf { it.isNotBlank() }?.let { text ->
@@ -123,6 +133,19 @@ class VoiceService : LifecycleService() {
             }
         }
         return START_STICKY
+    }
+
+    /** "Display over other apps" lets us start the invisible StartActivity; otherwise ask the user to tap. */
+    private fun resumeFromForeground() {
+        val start = Intent(this, StartActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (android.provider.Settings.canDrawOverlays(this) && runCatching { startActivity(start) }.isSuccess) return
+        getSystemService(NotificationManager::class.java).notify(
+            4,
+            NotificationCompat.Builder(this, CHANNEL_ALERTS).setSmallIcon(R.drawable.ic_mic)
+                .setContentTitle("Home Voice stopped listening").setContentText("Tap to resume")
+                .setContentIntent(PendingIntent.getActivity(this, 4, start, PendingIntent.FLAG_IMMUTABLE))
+                .setAutoCancel(true).build(),
+        )
     }
 
     private fun startPipeline() {
