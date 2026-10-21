@@ -8,7 +8,9 @@ import android.os.PowerManager
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -101,7 +103,7 @@ class AssistantPanel(private val context: Context) {
         val v = ComposeView(context).apply {
             setViewTreeLifecycleOwner(o)
             setViewTreeSavedStateRegistryOwner(o)
-            setContent { PanelHost(visible, onDismiss = { dismiss() }) }
+            setContent { PanelHost(visible, onDismiss = { UiBus.onConversationClosed?.invoke(); dismiss() }) }
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -151,13 +153,17 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
             .shadow(24.dp, RoundedCornerShape(28.dp))
             .background(Color(0xFF2B2930), RoundedCornerShape(28.dp)) // opaque, a step lighter than dark app surfaces
             .border(1.dp, Color(0xFF4A4458), RoundedCornerShape(28.dp))
-            .clickable(onClick = onDismiss)
-            .animateContentSize()
-            .padding(horizontal = 28.dp, vertical = 22.dp),
+            .heightIn(max = 440.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        StateLine(convo)
-        ConversationTurns(turns, maxTurns = if (ui != null) 1 else 3)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { StateLine(convo) }
+            TextButton(onClick = onDismiss) { Text("Close", color = Color(0xFFD0BCFF)) }
+        }
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            ConversationTurns(turns, maxTurns = if (ui != null) 1 else 3)
+        }
         ui?.let {
             Box(Modifier.fillMaxWidth().background(Color(0xFF0E0E10), RoundedCornerShape(18.dp)).padding(20.dp)) {
                 UiView(it, scale = 0.6f)
@@ -170,6 +176,9 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
 @Composable
 fun StateLine(convo: ConversationState) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (convo.active && convo.state in listOf("thinking", "speaking")) {
+            TextButton(onClick = { UiBus.onInterrupt?.invoke() }) { Text("Stop reply", color = Color(0xFFD0BCFF)) }
+        }
         StateDot(if (convo.active) convo.state else "done")
         Text(
             if (!convo.active) "Say \"Hey Jarvis\" to continue"

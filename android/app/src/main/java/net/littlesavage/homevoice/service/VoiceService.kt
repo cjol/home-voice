@@ -41,7 +41,7 @@ import net.littlesavage.homevoice.wakeword.OpenWakeWord
  *
  *   IDLE      mic -> wake word only, nothing leaves the device
  *   SESSION   mic -> WebSocket (Flux on the server detects end of turn).
- *             Wake word still runs locally: hearing it during playback = barge-in.
+ *             Manual interruption only; microphone recognition pauses during replies.
  *             Session ends after FOLLOW_UP_MS of nothing happening.
  */
 class VoiceService : LifecycleService() {
@@ -85,7 +85,8 @@ class VoiceService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val tone by lazy { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60) }
 
-    private var suppressMicUntil = 0L
+    private val preRoll = ArrayDeque<ShortArray>()
+    @Volatile private var suppressMicUntil = 0L
     private val silentFrame = ShortArray(1280)
 
     @Volatile private var inSession = false
@@ -107,6 +108,19 @@ class VoiceService : LifecycleService() {
         settings = Settings(this)
         panel = AssistantPanel(this)
         UiBus.onDismissed = { id -> client?.send(ClientMessage.UiEvent(uiId = id, action = "dismissed")) }
+        UiBus.onInterrupt = {
+            client?.send(ClientMessage.Interrupt)
+            stopReply()
+            agentState = "listening"
+            Conversation.setState("listening")
+            suppressMicUntil = SystemClock.elapsedRealtime() + 600L
+            deadline = suppressMicUntil + FOLLOW_UP_MS
+        }
+        UiBus.onConversationClosed = {
+            client?.send(ClientMessage.Interrupt)
+            stopReply()
+            endSession("dismissed")
+        }
         createChannels()
     }
 
@@ -174,7 +188,10 @@ class VoiceService : LifecycleService() {
 
         player = PcmPlayer { turnId ->
             client?.send(ClientMessage.PlaybackDone(turnId))
-            deadline = SystemClock.elapsedRealtime() + FOLLOW_UP_MS // listen for a follow-up
+            agentState = "listening"
+            Conversation.setState("listening")
+            suppressMicUntil = SystemClock.elapsedRealtime() + 600L
+            deadline = suppressMicUntil + FOLLOW_UP_MS // only after actual playback drains
         }
         client = AgentClient(settings.serverUrl, settings.deviceId, settings.token, agentListener).also { it.connect() }
         mic = MicCapture(::onFrame).also { it.start() }
@@ -192,19 +209,22 @@ class VoiceService : LifecycleService() {
             if (inSession) client?.sendAudio(silentFrame)
             return
         }
-        val heard = wakeWord?.process(frame) == true
         if (!inSession) {
-            if (heard) beginSession()
+            preRoll.addLast(frame.copyOf())
+            while (preRoll.size > 25) preRoll.removeFirst() // two seconds before detection
+            if (wakeWord?.process(frame) == true) {
+                beginSession()
+                if (inSession) preRoll.forEach { client?.sendAudio(it) }
+                preRoll.clear()
+            }
+            return
+        }
+        // Manual interruption only. Ignore speech while generating or playing a reply.
+        if (agentState == "thinking" || agentState == "speaking") {
+            client?.sendAudio(silentFrame)
             return
         }
         client?.sendAudio(frame)
-        if (heard) {
-            // Local barge-in. Reported even if playback already stopped (Flux may have heard us first)
-            // so the agent can drop the wake word from the transcript.
-            stopReply()
-            client?.send(ClientMessage.Interrupt)
-            deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
-        }
         val busy = agentState == "thinking" || agentState == "speaking" || player?.isPlaying == true
         if (!busy && SystemClock.elapsedRealtime() > deadline) endSession("timeout")
     }
@@ -250,9 +270,9 @@ class VoiceService : LifecycleService() {
                 is ServerMessage.State -> {
                     // Back to listening (after a reply or a barge-in): give the user a fresh window to speak.
                     if (msg.state == "listening" && agentState != "listening") deadline = maxOf(deadline, SystemClock.elapsedRealtime() + NO_SPEECH_MS)
-                    agentState = msg.state
+                    agentState = if (player?.isPlaying == true) "speaking" else msg.state
                     publish { it.copy(agent = msg.state) }
-                    if (inSession) Conversation.setState(msg.state)
+                    if (inSession) Conversation.setState(agentState)
                 }
                 is ServerMessage.Transcript -> {
                     if (msg.final) Log.i(TAG, "you: ${msg.text}") else Log.d(TAG, "partial: ${msg.text}")
@@ -267,6 +287,7 @@ class VoiceService : LifecycleService() {
                 }
                 is ServerMessage.TtsStart -> {
                     Log.i(TAG, "tts start")
+                    agentState = "speaking"
                     replyTurnId = msg.turnId
                     player?.begin(msg.sampleRate)
                 }
@@ -342,6 +363,8 @@ class VoiceService : LifecycleService() {
         Conversation.end()
         UiBus.dismiss()
         Conversation.clear()
+        UiBus.onInterrupt = null
+        UiBus.onConversationClosed = null
         panel.dismiss()
         mic?.stop(); mic = null
         player?.release(); player = null

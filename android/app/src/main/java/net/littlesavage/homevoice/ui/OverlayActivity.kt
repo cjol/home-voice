@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,7 +71,8 @@ class OverlayActivity : ComponentActivity() {
                 if (ttl > 0) { delay(ttl); UiBus.closeLocally(current) }
             }
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Column(Modifier.fillMaxSize().background(Color.Black).padding(horizontal = 48.dp, vertical = 32.dp)) {
+                val compact = LocalConfiguration.current.screenWidthDp < 600
+                Column(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding().padding(if (compact) 12.dp else 24.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         // Explicit close: a stray tap shouldn't wipe a table you're building.
                         FilledTonalIconButton(onClick = { current?.let { UiBus.closeLocally(it) } }, modifier = Modifier.size(56.dp)) {
@@ -78,16 +80,18 @@ class OverlayActivity : ComponentActivity() {
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
-                        current?.let { UiView(it, Modifier.widthIn(max = 1100.dp).fillMaxWidth()) }
+                        current?.let { UiView(it, Modifier.widthIn(max = 1100.dp).fillMaxWidth(), scale = if (compact) 0.65f else 1f) }
                     }
                     if (convo.turns.isNotEmpty() || convo.active) {
                         Column(
-                            Modifier.fillMaxWidth().padding(top = 16.dp)
-                                .background(Color(0xFF1C1B1F), RoundedCornerShape(24.dp)).padding(horizontal = 28.dp, vertical = 18.dp),
+                            Modifier.fillMaxWidth().heightIn(max = if (compact) 200.dp else 300.dp).padding(top = 12.dp)
+                                .background(Color(0xFF1C1B1F), RoundedCornerShape(24.dp)).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             StateLine(convo)
-                            ConversationTurns(convo.turns, maxTurns = 3, textSize = 20)
+                            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                                ConversationTurns(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20)
+                            }
                         }
                     }
                 }

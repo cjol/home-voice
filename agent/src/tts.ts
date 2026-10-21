@@ -26,6 +26,7 @@ class SpeakSocket {
   private lastSent = Date.now();
   private flushAt: number[] = [];
   private keepalive: ReturnType<typeof setInterval>;
+  onClose: () => void = () => {};
   onAudio: (pcm: ArrayBuffer) => void = () => {};
   onMessage: (m: AuraMsg) => void = () => {};
 
@@ -66,8 +67,10 @@ class SpeakSocket {
   }
 
   private stop() {
+    if (this.closed) return;
     this.closed = true;
     clearInterval(this.keepalive);
+    this.onClose();
   }
 
   close() {
@@ -133,6 +136,7 @@ export class TtsTurn {
   sentMs = 0;
   readonly segments: { text: string; endMs: number }[] = [];
 
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private sock: SpeakSocket | null = null;
   private pending: string[] = []; // spoken but not yet flushed
   private inFlight: { seq: number; texts: string[] } | null = null;
@@ -171,6 +175,7 @@ export class TtsTurn {
   async abort() {
     if (this.aborted) return;
     this.aborted = true;
+    clearTimeout(this.watchdog);
     this.pending = [];
     this.done();
     const s = this.sock;
@@ -199,6 +204,7 @@ export class TtsTurn {
     try {
       let s = await this.tts.socket();
       if (s.flushBudget < 1) {
+        s.onClose = () => {};
         this.tts.retire();
         s = await this.tts.socket();
       }
@@ -207,6 +213,10 @@ export class TtsTurn {
       const texts = s.flushBudget > 2 ? [this.pending.shift()!] : this.pending.splice(0);
       for (const text of texts) s.send({ type: "Speak", text: text + " " });
       this.inFlight = { seq: s.flush(), texts };
+      this.watchdog = setTimeout(() => {
+        this.failed(new Error("Aura synthesis timed out waiting for Flushed"));
+        this.tts.retire();
+      }, 30_000);
     } catch (err) {
       this.failed(err instanceof Error ? err : new Error(String(err)));
     }
@@ -215,6 +225,10 @@ export class TtsTurn {
   private attach(s: SpeakSocket) {
     if (this.sock === s) return;
     this.sock = s;
+    s.onClose = () => {
+      clearTimeout(this.watchdog);
+      if (!this.aborted && (this.inFlight || this.pending.length)) this.failed(new Error("Aura socket closed during synthesis"));
+    };
     s.onAudio = (pcm) => {
       if (this.aborted) return;
       if (!this.started) {
@@ -227,6 +241,7 @@ export class TtsTurn {
       if (m.type === "Flushed" && this.inFlight && m.sequence_id === this.inFlight.seq) {
         // Whole batch synthesised. Audio carries no text boundaries, so split the batch's audio
         // across its sentences by length (good enough to cut history at what was heard).
+        clearTimeout(this.watchdog);
         const { texts } = this.inFlight;
         const startMs = this.segments.at(-1)?.endMs ?? 0;
         const total = texts.reduce((n, t) => n + t.length, 0) || 1;

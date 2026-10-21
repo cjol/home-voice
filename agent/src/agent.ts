@@ -114,11 +114,11 @@ export class VoiceAgent extends Agent<Env, State> {
         await this.startSession();
         break;
       case "end_session":
+        this.cancelTurn();
         this.endSession();
         this.setVoiceState("idle");
         break;
       case "interrupt":
-        this.wakeHeardAt = Date.now();
         this.bargeIn();
         break;
       case "playback_done":
@@ -287,12 +287,11 @@ export class VoiceAgent extends Agent<Env, State> {
   }
 
   private onFlux(e: FluxEvent) {
+    if (this.agentState === "speaking" || this.agentState === "thinking") return;
     const text = e.transcript?.trim() ?? "";
     switch (e.event) {
       case "StartOfTurn":
-        // Server-side barge-in: the user started talking while we speak.
-        // Relies on device AEC so our own TTS doesn't trigger this.
-        if (this.agentState === "speaking" || this.agentState === "thinking") this.bargeIn();
+        // Speech never interrupts a reply; the device exposes a manual button.
         break;
       case "Update":
       case "EagerEndOfTurn":
@@ -446,6 +445,8 @@ export class VoiceAgent extends Agent<Env, State> {
     } catch (err) {
       if (!signal.aborted) {
         console.error("turn failed", err);
+        await turn.tts.abort();
+        this.send({ type: "stop_playback", turnId: turn.id });
         this.send({ type: "error", message: String(err) });
         this.dropDanglingToolCalls();
         // Drop the dangling user message so history stays valid.

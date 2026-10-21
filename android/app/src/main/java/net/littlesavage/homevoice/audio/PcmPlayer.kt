@@ -34,7 +34,7 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
         stop()
         val t = track?.takeIf { it.sampleRate == sampleRate } ?: createTrack(sampleRate).also { track?.release(); track = it }
         framesWritten = 0L
-        headAtBegin = t.playbackHeadPosition.toLong() and 0xffffffffL
+        headAtBegin = 0L // flush resets the playback head when play resumes
         t.play()
         isPlaying = true
         if (thread == null) startThread()
@@ -92,7 +92,8 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
                     }
                     is Item.End -> {
                         // Wait for the hardware buffer to empty before declaring done.
-                        while (running && gen == generation && track?.let {
+                        val drainDeadline = android.os.SystemClock.elapsedRealtime() + 10_000L
+                        while (running && gen == generation && android.os.SystemClock.elapsedRealtime() < drainDeadline && track?.let {
                             (it.playbackHeadPosition.toLong() and 0xffffffffL) - headAtBegin < framesWritten
                         } == true) Thread.sleep(20)
                         if (gen == generation) { isPlaying = false; onDrained(item.turnId) }

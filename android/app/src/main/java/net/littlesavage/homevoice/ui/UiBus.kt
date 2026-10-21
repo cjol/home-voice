@@ -53,6 +53,9 @@ object UiBus {
     val fullscreenVisible = MutableStateFlow(false)
 
     /** Told when the device closes a screen itself (tap, ttl), so the agent's idea of the screen stays right. */
+    var onInterrupt: (() -> Unit)? = null
+    var onConversationClosed: (() -> Unit)? = null
+
     var onDismissed: ((id: String) -> Unit)? = null
 
     fun showPanel(ui: UiMessage) {
@@ -74,6 +77,7 @@ object UiBus {
     /** Closed on the device: also tell the agent. */
     fun closeLocally(ui: UiMessage) {
         dismiss(ui.id)
+        onConversationClosed?.invoke()
         onDismissed?.invoke(ui.id)
         if (_fullscreen.value == null && _panel.value == null) Conversation.clear()
     }
