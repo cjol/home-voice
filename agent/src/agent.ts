@@ -130,9 +130,17 @@ export class VoiceAgent extends Agent<Env, State> {
       case "text_input":
         if (msg.text?.trim()) void this.runTurn(msg.text.trim());
         break;
+      case "ui_state": {
+        await this.loadHistory();
+        const open = new Set(msg.openIds);
+        for (const id of this.surfaces.keys()) if (!open.has(id)) this.surfaces.delete(id);
+        await this.saveHistory();
+        break;
+      }
       case "ui_event":
-        // The device closed a screen (tap or ttl): keep our idea of the screen in sync.
-        if (msg.action === "dismissed" && this.surfaces.delete(msg.uiId)) void this.saveHistory();
+        // A hibernated object starts with an empty map: hydrate before applying the close.
+        await this.loadHistory();
+        if (msg.action === "dismissed" && this.surfaces.delete(msg.uiId)) await this.saveHistory();
         // TODO: feed other UI taps into the conversation (e.g. as a user message "[tapped X]").
         break;
       case "ping":
@@ -152,7 +160,7 @@ export class VoiceAgent extends Agent<Env, State> {
       return Response.json({ model: this.model });
     }
     await this.loadHistory();
-    return Response.json({ model: this.model, mcp: this.getMcpServers().servers, history: this.history });
+    return Response.json({ model: this.model, mcp: this.getMcpServers().servers, history: this.history, screens: [...this.surfaces.values()] });
   }
 
   // ---- Executor MCP --------------------------------------------------------
@@ -468,11 +476,11 @@ export class VoiceAgent extends Agent<Env, State> {
 
   /** What's on screen, in full, so the model can extend it even after older turns are trimmed. */
   private screenNote(): string {
-    if (!this.surfaces.size) return "";
+    if (!this.surfaces.size) return "Device screen state (authoritative): no generated screens are open. Earlier show_ui tool results describe past screens, not screens currently visible. Do not say a table is still on screen unless you show it again.";
     const shown = [...this.surfaces.values()].map(({ v: _v, ...ui }) => ui);
     let json = JSON.stringify(shown);
     if (json.length > 6000) json = json.slice(0, 6000) + "…";
-    return `On screen now (show_ui with the same id replaces one): ${json}`;
+    return `Device screen state (authoritative; overrides old tool results). On screen now (show_ui with the same id replaces one): ${json}`;
   }
 
   private historyLoaded = false;

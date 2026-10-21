@@ -68,6 +68,8 @@ object UiBus {
         _fullscreen.value = ui
     }
 
+    fun openIds(): List<String> = listOfNotNull(_panel.value?.id, _fullscreen.value?.id)
+
     /** From the agent (dismiss_ui): null id = everything. */
     fun dismiss(id: String? = null) {
         if (id == null || _panel.value?.id == id) _panel.value = null

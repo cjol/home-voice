@@ -158,12 +158,9 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { StateLine(convo) }
-            TextButton(onClick = onDismiss) { Text("Close", color = Color(0xFFD0BCFF)) }
+            ConversationControls(convo, onEnd = onDismiss)
         }
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-            ConversationTurns(turns, maxTurns = if (ui != null) 1 else 3)
-        }
+        Transcript(turns, maxTurns = if (ui != null) 1 else 3, modifier = Modifier.weight(1f, fill = false))
         ui?.let {
             Box(Modifier.fillMaxWidth().background(Color(0xFF0E0E10), RoundedCornerShape(18.dp)).padding(20.dp)) {
                 UiView(it, scale = 0.6f)
@@ -176,15 +173,40 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
 @Composable
 fun StateLine(convo: ConversationState) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (convo.active && convo.state in listOf("thinking", "speaking")) {
-            TextButton(onClick = { UiBus.onInterrupt?.invoke() }) { Text("Stop reply", color = Color(0xFFD0BCFF)) }
-        }
         StateDot(if (convo.active) convo.state else "done")
         Text(
             if (!convo.active) "Say \"Hey Jarvis\" to continue"
             else when (convo.state) { "thinking" -> "Thinking…"; "speaking" -> "Speaking"; else -> "Listening…" },
             color = Color(0xFFB0B0B8), fontSize = 15.sp,
         )
+    }
+}
+
+/** Stable controls: stopping speech and ending listening are separate actions. */
+@Composable
+fun ConversationControls(convo: ConversationState, onEnd: () -> Unit = { UiBus.onConversationClosed?.invoke() }) {
+    Column(Modifier.fillMaxWidth()) {
+        StateLine(convo)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { UiBus.onInterrupt?.invoke() }) {
+                Text("Stop reply", color = Color(0xFFD0BCFF))
+            }
+            TextButton(onClick = onEnd, enabled = convo.active) {
+                Text("End conversation", color = if (convo.active) Color(0xFFD0BCFF) else Color.Gray)
+            }
+        }
+    }
+}
+
+/** Follow content after layout, including a viewport resize or another streamed sentence. */
+@Composable
+fun Transcript(turns: List<Turn>, maxTurns: Int, textSize: Int = 22, modifier: Modifier = Modifier) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(turns) {
+        snapshotFlow { scroll.maxValue }.collect { scroll.scrollTo(it) }
+    }
+    Column(modifier.verticalScroll(scroll)) {
+        ConversationTurns(turns, maxTurns, textSize)
     }
 }
 

@@ -266,3 +266,16 @@ mise exec -- node --test /tmp/homevoice-tts-test.mjs
 Open screen contents are persisted separately from conversation messages and supplied to every model turn, with no time or turn-count expiry. This includes tables even after the 10-minute history reset. Closing a screen removes this separate context. The combined screen note is capped at 6,000 characters, so very large screens may be truncated.
 
 Native-library alignment check after building: `python3 android/scripts/check-native-alignment.py android/app/build/outputs/apk/debug/app-debug.apk`. ONNX Runtime 1.23.0 replaces the older JNI library that triggered Android’s 16 KB compatibility warning.
+
+### Transcript controls and screen reconciliation
+
+Both transcript views have a persistent **Stop reply** button, which cancels speech and opens a follow-up listening window, and **End conversation**, which stops speech and follow-up listening. In full-screen mode, ending the conversation leaves the table open. The table's **✕** closes the table and ends listening. The transcript follows new content after layout without animating its scroll position.
+
+The tablet reports `ui_state {openIds}` on every connection, so tables closed while offline or lost on an app restart are removed from the agent's saved screen context. Dismiss events load persisted state before removing a screen, including after Durable Object hibernation. Each model request gets an authoritative screen-state note, including an explicit empty state when nothing is open.
+
+To exercise the persisted-dismissal regression against the deployed test device:
+```sh
+mise exec -- node agent/scripts/screen-state.mjs seed
+mise exec -- npm run deploy -w agent  # evicts in-memory DO state
+mise exec -- node agent/scripts/screen-state.mjs verify
+```

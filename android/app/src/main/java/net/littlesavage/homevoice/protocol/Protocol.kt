@@ -38,6 +38,8 @@ sealed interface ClientMessage {
     data class TextInput(val text: String) : ClientMessage
     @Serializable @SerialName("ui_event")
     data class UiEvent(val uiId: String, val action: String, val value: String? = null) : ClientMessage
+    @Serializable @SerialName("ui_state")
+    data class UiState(val openIds: List<String>) : ClientMessage
     @Serializable @SerialName("ping")
     data object Ping : ClientMessage
 }

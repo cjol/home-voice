@@ -111,6 +111,7 @@ class VoiceService : LifecycleService() {
         UiBus.onInterrupt = {
             client?.send(ClientMessage.Interrupt)
             stopReply()
+            if (!inSession) beginSession()
             agentState = "listening"
             Conversation.setState("listening")
             suppressMicUntil = SystemClock.elapsedRealtime() + 600L
@@ -301,7 +302,10 @@ class VoiceService : LifecycleService() {
                 is ServerMessage.DismissUi -> UiBus.dismiss(msg.uiId)
                 is ServerMessage.AuthRequired -> authNotification(msg.url)
                 is ServerMessage.Error -> Log.e(TAG, "agent error: ${msg.message}")
-                is ServerMessage.Ready -> Log.i(TAG, "ready model=${msg.model} tools=${msg.tools}")
+                is ServerMessage.Ready -> {
+                    Log.i(TAG, "ready model=${msg.model} tools=${msg.tools}")
+                    client?.send(ClientMessage.UiState(UiBus.openIds()))
+                }
                 ServerMessage.Pong -> Unit
             }
         }

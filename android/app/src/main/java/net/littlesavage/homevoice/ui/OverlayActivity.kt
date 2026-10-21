@@ -84,14 +84,13 @@ class OverlayActivity : ComponentActivity() {
                     }
                     if (convo.turns.isNotEmpty() || convo.active) {
                         Column(
-                            Modifier.fillMaxWidth().heightIn(max = if (compact) 200.dp else 300.dp).padding(top = 12.dp)
+                            Modifier.fillMaxWidth().heightIn(max = if (compact) 260.dp else 340.dp).padding(top = 12.dp)
                                 .background(Color(0xFF1C1B1F), RoundedCornerShape(24.dp)).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            StateLine(convo)
-                            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                                ConversationTurns(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20)
-                            }
+                            ConversationControls(convo)
+                            Transcript(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20,
+                                modifier = Modifier.weight(1f, fill = false))
                         }
                     }
                 }

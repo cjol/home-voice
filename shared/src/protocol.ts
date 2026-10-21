@@ -25,7 +25,7 @@ export type ClientMessage =
   | { type: "start_session"; wakeWord?: string }
   /** Device stopped streaming (follow-up window expired or user cancelled). */
   | { type: "end_session"; reason?: string }
-  /** Wake word heard mid-session: stop speaking now, and treat the next short turn as the wake word itself. */
+  /** User manually stopped the reply. */
   | { type: "interrupt" }
   /** After stopping playback early (barge-in): how much of that reply's audio actually played. */
   | { type: "played"; turnId: string; playedMs: number }
@@ -35,6 +35,8 @@ export type ClientMessage =
   | { type: "text_input"; text: string }
   /** User touched something in a UI overlay. */
   | { type: "ui_event"; uiId: string; action: string; value?: string }
+  /** Authoritative screen IDs on this device, sent after each reconnect. */
+  | { type: "ui_state"; openIds: string[] }
   | { type: "ping" };
 
 // ---- agent -> device -------------------------------------------------------
