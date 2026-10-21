@@ -142,7 +142,7 @@ export class VoiceAgent extends Agent<Env, State> {
   }
 
   private async ensureExecutor(origin: string): Promise<"connected" | "auth_required" | "error" | "disabled"> {
-    if (this.env.EXECUTOR_ENABLED !== "true") return "disabled";
+    if ((this.env.EXECUTOR_ENABLED as string) !== "true") return "disabled";
     try {
       const id = this.executorId();
       const existing = id ? this.getMcpServers().servers[id] : undefined;

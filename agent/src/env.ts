@@ -1,12 +1,5 @@
-import type { VoiceAgent } from "./agent";
-
-export interface Env {
-  AI: Ai;
-  VoiceAgent: DurableObjectNamespace<VoiceAgent>;
-  LLM_MODEL: string;
-  TTS_VOICE: string;
-  EXECUTOR_MCP_URL: string;
-  EXECUTOR_ENABLED?: string;
-  DEVICE_TOKEN?: string;
+// Inferred from cloudflare.config.ts by `cf workers types` (.cloudflare/types/index.d.ts).
+export type Env = Cloudflare.Env & {
+  /** Optional: OAuth callback host override; derived from the request when unset. */
   PUBLIC_URL?: string;
-}
+};
