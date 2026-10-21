@@ -21,6 +21,9 @@ const MAX_TOOL_ROUNDS = 5;
 const HISTORY_TURNS = 12;
 const HISTORY_IDLE_RESET_MS = 10 * 60_000;
 const PREAMBLE = "Let me check.";
+/** A short turn ending this soon after a wake-word barge-in is the wake word itself (Flux may hear "Hey Jarvis" as "HRV"). */
+const WAKE_ECHO_MS = 4_000;
+const WAKE_PREFIX = /^\s*(hey|hi|okay|ok)[,\s]+jarvis\b[,.!?\s]*/i;
 
 interface State {
   /** Per-device override of env.LLM_MODEL (set via onRequest POST /config). */
@@ -36,12 +39,21 @@ interface State {
 export class VoiceAgent extends Agent<Env, State> {
   initialState: State = {};
 
-  private device: Connection | null = null;
+  // In-memory fields are lost when the DO hibernates between sessions; anything that must
+  // survive is re-derived (device connection) or persisted (history).
+  private _device: Connection | null = null;
   private stt: FluxStt | null = null;
   private history: ChatMessage[] = [];
   private lastTurnAt = 0;
   private turn: { id: string; abort: AbortController } | null = null;
   private agentState: AgentState = "idle";
+  private wakeHeardAt = 0;
+
+  /** The device socket, re-attached from the hibernation-surviving connection list if needed. */
+  private get device(): Connection | null {
+    if (!this._device) this._device = [...this.getConnections()].at(-1) ?? null;
+    return this._device;
+  }
 
   private get model() {
     return this.state.model ?? this.env.LLM_MODEL;
@@ -51,21 +63,22 @@ export class VoiceAgent extends Agent<Env, State> {
 
   async onConnect(conn: Connection, ctx: ConnectionContext) {
     // Single device per DO: newest connection wins.
-    if (this.device && this.device.id !== conn.id) this.device.close(4000, "replaced");
-    this.device = conn;
+    for (const c of this.getConnections()) if (c.id !== conn.id) c.close(4000, "replaced");
+    this._device = conn;
     const tools = await this.ensureExecutor(new URL(ctx.request.url).origin);
     this.send({ type: "ready", v: PROTOCOL_VERSION, model: this.model, tools });
   }
 
   async onClose(conn: Connection) {
     if (this.device?.id !== conn.id) return;
-    this.device = null;
+    this._device = null;
     this.cancelTurn();
     this.stt?.close();
     this.stt = null;
   }
 
   async onMessage(conn: Connection, message: WSMessage) {
+    this._device = conn;
     if (typeof message !== "string") {
       // Binary = mic PCM.
       const buf = message instanceof ArrayBuffer ? message : (message as ArrayBufferView).buffer as ArrayBuffer;
@@ -90,10 +103,14 @@ export class VoiceAgent extends Agent<Env, State> {
         this.setVoiceState("idle");
         break;
       case "interrupt":
+        this.wakeHeardAt = Date.now();
         this.bargeIn();
         break;
       case "playback_done":
         break; // TODO: use for follow-up window timing on the server if needed
+      case "text_input":
+        if (msg.text?.trim()) void this.runTurn(msg.text.trim());
+        break;
       case "ui_event":
         // TODO: feed UI taps into the conversation (e.g. as a user message "[tapped X]").
         console.log("ui_event", msg);
@@ -124,7 +141,8 @@ export class VoiceAgent extends Agent<Env, State> {
     return Object.entries(servers).find(([, s]) => s.name === EXECUTOR)?.[0];
   }
 
-  private async ensureExecutor(origin: string): Promise<"connected" | "auth_required" | "error"> {
+  private async ensureExecutor(origin: string): Promise<"connected" | "auth_required" | "error" | "disabled"> {
+    if (this.env.EXECUTOR_ENABLED !== "true") return "disabled";
     try {
       const id = this.executorId();
       const existing = id ? this.getMcpServers().servers[id] : undefined;
@@ -199,10 +217,13 @@ export class VoiceAgent extends Agent<Env, State> {
 
   private async startSession() {
     if (!this.stt) {
-      this.stt = new FluxStt(this.env, {
+      const stt: FluxStt = new FluxStt(this.env, {
         onEvent: (e) => this.onFlux(e),
-        onClose: () => (this.stt = null),
+        onClose: () => {
+          if (this.stt === stt) this.stt = null;
+        },
       });
+      this.stt = stt;
     }
     try {
       await this.stt.open();
@@ -227,11 +248,14 @@ export class VoiceAgent extends Agent<Env, State> {
         // TODO: speculative LLM start on EagerEndOfTurn, cancel on TurnResumed.
         if (text) this.send({ type: "transcript", text, final: false });
         break;
-      case "EndOfTurn":
-        if (!text) return;
-        this.send({ type: "transcript", text, final: true });
-        void this.runTurn(text);
+      case "EndOfTurn": {
+        const words = text.replace(WAKE_PREFIX, "").trim();
+        const wakeEcho = Date.now() - this.wakeHeardAt < WAKE_ECHO_MS && text.split(/\s+/).length <= 3;
+        if (!words || wakeEcho) return; // the interruption itself, not a request
+        this.send({ type: "transcript", text: words, final: true });
+        void this.runTurn(words);
         break;
+      }
     }
   }
 
@@ -255,6 +279,7 @@ export class VoiceAgent extends Agent<Env, State> {
     this.turn = turn;
     const signal = turn.abort.signal;
 
+    await this.loadHistory();
     if (Date.now() - this.lastTurnAt > HISTORY_IDLE_RESET_MS) this.history = [];
     this.lastTurnAt = Date.now();
     this.history.push({ role: "user", content: userText });
@@ -281,7 +306,8 @@ export class VoiceAgent extends Agent<Env, State> {
       const tools = this.toolDefs();
       for (let round = 0; round <= MAX_TOOL_ROUNDS && !signal.aborted; round++) {
         const chunker = new SentenceChunker();
-        const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(new Date()) }, ...this.history];
+        const executor = tools.some((t) => t.function.name !== "show_ui");
+        const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(new Date(), { executor }) }, ...this.history];
         const { text, toolCalls } = await streamChat(
           this.env,
           this.model,
@@ -322,6 +348,18 @@ export class VoiceAgent extends Agent<Env, State> {
         this.setVoiceState(this.stt ? "listening" : "idle");
       }
       this.trimHistory();
+      await this.ctx.storage.put("history", { at: this.lastTurnAt, messages: this.history });
+    }
+  }
+
+  private historyLoaded = false;
+  private async loadHistory() {
+    if (this.historyLoaded) return;
+    this.historyLoaded = true;
+    const saved = await this.ctx.storage.get<{ at: number; messages: ChatMessage[] }>("history");
+    if (saved) {
+      this.history = saved.messages;
+      this.lastTurnAt = saved.at;
     }
   }
 
@@ -329,7 +367,6 @@ export class VoiceAgent extends Agent<Env, State> {
   private trimHistory() {
     const userIdx = this.history.map((m, i) => (m.role === "user" ? i : -1)).filter((i) => i >= 0);
     if (userIdx.length > HISTORY_TURNS) this.history = this.history.slice(userIdx[userIdx.length - HISTORY_TURNS]);
-    // TODO: persist history in this.sql so it survives eviction.
   }
 
   // ---- helpers -------------------------------------------------------------

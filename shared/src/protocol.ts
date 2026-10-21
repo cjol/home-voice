@@ -25,10 +25,12 @@ export type ClientMessage =
   | { type: "start_session"; wakeWord?: string }
   /** Device stopped streaming (follow-up window expired or user cancelled). */
   | { type: "end_session"; reason?: string }
-  /** Local barge-in (e.g. wake word heard during playback): stop speaking now. */
+  /** Wake word heard mid-session: stop speaking now, and treat the next short turn as the wake word itself. */
   | { type: "interrupt" }
   /** Device finished playing a TTS segment (used for follow-up timing). */
   | { type: "playback_done"; turnId: string }
+  /** Typed/test input: runs a turn exactly as if Flux had transcribed it (skips STT). */
+  | { type: "text_input"; text: string }
   /** User touched something in a UI overlay. */
   | { type: "ui_event"; uiId: string; action: string; value?: string }
   | { type: "ping" };
@@ -38,7 +40,7 @@ export type ClientMessage =
 export type AgentState = "idle" | "listening" | "thinking" | "speaking";
 
 export type ServerMessage =
-  | { type: "ready"; v: typeof PROTOCOL_VERSION; model: string; tools: "connected" | "auth_required" | "error" }
+  | { type: "ready"; v: typeof PROTOCOL_VERSION; model: string; tools: "connected" | "auth_required" | "error" | "disabled" }
   | { type: "state"; state: AgentState }
   /** Interim transcript of the current user turn. */
   | { type: "transcript"; text: string; final: boolean }
