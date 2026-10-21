@@ -6,6 +6,7 @@ export interface Env {
   LLM_MODEL: string;
   TTS_VOICE: string;
   EXECUTOR_MCP_URL: string;
+  EXECUTOR_ENABLED?: string;
   DEVICE_TOKEN?: string;
   PUBLIC_URL?: string;
 }

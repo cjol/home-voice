@@ -15,7 +15,9 @@
     // Must support real tool calls; see NON_TOOL_MODELS in src/llm.ts for known-bad ones.
     "LLM_MODEL": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
     "TTS_VOICE": "luna",
-    "EXECUTOR_MCP_URL": "https://mcp.executor.sh/mcp"
+    "EXECUTOR_MCP_URL": "https://mcp.executor.sh/mcp",
+    // Off until the voice loop is proven; set "true" to connect Executor (starts OAuth on first connect).
+    "EXECUTOR_ENABLED": "false"
     // PUBLIC_URL (OAuth callback host) is derived from the request if unset.
   },
   "observability": { "enabled": true }
