@@ -11,7 +11,7 @@ export default defineConfig({
 		entrypoint: "src/index.ts",
 		observability: { enabled: true },
 		env: {
-			AI: bindings.ai({}),
+			AI: bindings.ai({ dev: { remote: true } }), // always remote, even in local dev
 			VoiceAgent: bindings.durableObject({ worker: "home-voice-agent", exportName: "VoiceAgent" }),
 			// Benchmark winner: the only Workers AI model to answer all 4 Executor test questions (4-16 s).
 			// It must make real tool calls: see NON_TOOL_MODELS in src/llm.ts for known-bad ones.

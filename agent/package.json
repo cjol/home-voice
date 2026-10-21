@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "types": "cf workers types",
-    "dev": "cf dev",
+    "dev": "wrangler dev --experimental-new-config",
     "deploy": "cf deploy",
     "typecheck": "cf workers types >/dev/null && tsc --noEmit",
     "test:unwrap": "node src/unwrap.test.ts",

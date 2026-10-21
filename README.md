@@ -153,10 +153,15 @@ IDLE_MS=30000 node scripts/smoke.mjs math        # idle first, so the DO hiberna
 ```
 
 **Local dev:**
-1. Run `npm run dev -w agent`, which binds to `laptop:8787` and uses `agent/.dev.vars`.
+1. Run `npm run dev -w agent`. That's `wrangler dev --experimental-new-config`, because `cf dev` (beta.20) fails with `[object Object]` when it opens the remote connection. It binds to `laptop:8787` and uses `agent/.dev.vars`.
 2. Point a client at it with `node scripts/smoke.mjs math http://laptop:8787`.
 
-Workers AI calls go to your account even in local dev.
+Workers AI is always remote, even in local dev, and that needs wrangler credentials. `cf`'s login isn't shared with wrangler, so `agent/.env` (gitignored) holds `CLOUDFLARE_API_TOKEN` for an account token named `home-voice-dev`:
+- **ID:** `64d78e9bb77ea72a8fbaab01354c279e`
+- **Scopes:** Workers Scripts write, Account Settings read, Workers AI read
+- **Expires:** 2027-01-19
+
+Deploys don't use this token.
 
 **Hibernation:** the Durable Object hibernates between sessions, which wipes its in-memory fields.
 - The device connection is re-attached from `getConnections()`.
