@@ -27,6 +27,8 @@ import net.littlesavage.homevoice.net.AgentClient
 import net.littlesavage.homevoice.protocol.ClientMessage
 import net.littlesavage.homevoice.protocol.ServerMessage
 import net.littlesavage.homevoice.protocol.UiMessage
+import net.littlesavage.homevoice.ui.AssistantPanel
+import net.littlesavage.homevoice.ui.Exchange
 import net.littlesavage.homevoice.ui.MainActivity
 import net.littlesavage.homevoice.ui.OverlayActivity
 import net.littlesavage.homevoice.ui.UiBus
@@ -72,6 +74,7 @@ class VoiceService : LifecycleService() {
     }
 
     private lateinit var settings: Settings
+    private lateinit var panel: AssistantPanel
     private var client: AgentClient? = null
     private var mic: MicCapture? = null
     private var player: PcmPlayer? = null
@@ -96,6 +99,7 @@ class VoiceService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         settings = Settings(this)
+        panel = AssistantPanel(this)
         createChannels()
     }
 
@@ -108,6 +112,7 @@ class VoiceService : LifecycleService() {
                 if (!inSession) beginSession(sendStart = false)
                 client?.send(ClientMessage.TextInput(text))
                 publish { it.copy(lastTranscript = text) }
+                panel.update { newUtterance(it, text, final = true) }
             }
             ACTION_INJECT -> intent.getStringExtra("path")?.let { path ->
                 runCatching { java.io.File(path).readBytes() }
@@ -170,6 +175,7 @@ class VoiceService : LifecycleService() {
         inSession = true
         deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
         if (sendStart) c.send(ClientMessage.StartSession(wakeWord = "hey_jarvis"))
+        panel.start()
         publish { it.copy(mode = "in conversation") }
         updateNotification("Listening…")
     }
@@ -178,6 +184,7 @@ class VoiceService : LifecycleService() {
         if (!inSession) return
         inSession = false
         Log.i(TAG, "session end: $reason")
+        panel.finish()
         client?.send(ClientMessage.EndSession(reason))
         publish { it.copy(mode = "listening for wake word") }
         updateNotification("Listening for wake word")
@@ -198,15 +205,21 @@ class VoiceService : LifecycleService() {
                     if (msg.state == "listening" && agentState != "listening") deadline = maxOf(deadline, SystemClock.elapsedRealtime() + NO_SPEECH_MS)
                     agentState = msg.state
                     publish { it.copy(agent = msg.state) }
+                    if (inSession) panel.update { it.copy(state = msg.state) }
                 }
                 is ServerMessage.Transcript -> {
                     if (msg.final) Log.i(TAG, "you: ${msg.text}")
                     deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
                     publish { it.copy(lastTranscript = msg.text) }
+                    panel.update { newUtterance(it, msg.text, msg.final) }
                 }
                 is ServerMessage.AssistantText -> {
                     Log.i(TAG, "assistant: ${msg.text}")
                     publish { it.copy(lastReply = msg.text) }
+                    panel.update {
+                        if (it.replyTurnId != msg.turnId) it.copy(reply = msg.text, replyTurnId = msg.turnId)
+                        else it.copy(reply = it.reply + " " + msg.text)
+                    }
                 }
                 is ServerMessage.TtsStart -> {
                     Log.i(TAG, "tts start")
@@ -229,10 +242,20 @@ class VoiceService : LifecycleService() {
         }
     }
 
+    /** In the panel over the current app when possible; full screen when the screen is off or locked. */
     private fun showUi(ui: UiMessage) {
+        if (panel.canShow()) {
+            panel.update { it.copy(ui = ui) }
+            return
+        }
         UiBus.show(ui)
         OverlayActivity.bringToFront(this, ui.title ?: "Home Voice")
     }
+
+    /** A transcript update; speech after a finished reply starts a fresh exchange in the panel. */
+    private fun newUtterance(ex: Exchange, text: String, final: Boolean): Exchange =
+        if (ex.reply.isNotEmpty() || ex.ui != null) Exchange(state = ex.state, user = text, userFinal = final)
+        else ex.copy(user = text, userFinal = final)
 
     private fun publish(f: (Status) -> Status) {
         _status.value = f(_status.value).copy(wakeScore = wakeWord?.lastScore ?: 0f)
@@ -268,6 +291,7 @@ class VoiceService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        panel.dismiss()
         mic?.stop(); mic = null
         player?.release(); player = null
         client?.close(); client = null
