@@ -1,8 +1,16 @@
 {
   "name": "home-voice",
   "private": true,
-  "workspaces": ["shared", "agent"],
+  "workspaces": [
+    "shared",
+    "agent"
+  ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261019.1": true,
+    "core-js-pure": false
   }
 }
