@@ -82,6 +82,16 @@ class VoiceService : LifecycleService() {
     @Volatile private var inSession = false
     @Volatile private var deadline = 0L
     @Volatile private var agentState = "idle"
+    @Volatile private var replyTurnId: String? = null
+
+    /** Stop the reply and tell the agent how much of it was heard, so its history matches. */
+    private fun stopReply() {
+        val turnId = replyTurnId ?: return
+        val playing = player?.isPlaying == true
+        val played = player?.stop() ?: 0
+        if (playing) client?.send(ClientMessage.Played(turnId, played))
+        replyTurnId = null
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -141,7 +151,7 @@ class VoiceService : LifecycleService() {
         if (heard) {
             // Local barge-in. Reported even if playback already stopped (Flux may have heard us first)
             // so the agent can drop the wake word from the transcript.
-            player?.stop()
+            stopReply()
             client?.send(ClientMessage.Interrupt)
             deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
         }
@@ -198,11 +208,15 @@ class VoiceService : LifecycleService() {
                     Log.i(TAG, "assistant: ${msg.text}")
                     publish { it.copy(lastReply = msg.text) }
                 }
-                is ServerMessage.TtsStart -> { Log.i(TAG, "tts start"); player?.begin(msg.sampleRate) }
+                is ServerMessage.TtsStart -> {
+                    Log.i(TAG, "tts start")
+                    replyTurnId = msg.turnId
+                    player?.begin(msg.sampleRate)
+                }
                 is ServerMessage.TtsEnd -> player?.end(msg.turnId)
                 is ServerMessage.StopPlayback -> {
                     Log.i(TAG, "barge-in: stop playback")
-                    player?.stop()
+                    stopReply()
                     deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
                 }
                 is ServerMessage.Ui -> { Log.i(TAG, "ui ${msg.ui}"); showUi(msg.ui) }

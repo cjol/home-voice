@@ -30,6 +30,8 @@ sealed interface ClientMessage {
     data class EndSession(val reason: String? = null) : ClientMessage
     @Serializable @SerialName("interrupt")
     data object Interrupt : ClientMessage
+    @Serializable @SerialName("played")
+    data class Played(val turnId: String, val playedMs: Long) : ClientMessage
     @Serializable @SerialName("playback_done")
     data class PlaybackDone(val turnId: String) : ClientMessage
     @Serializable @SerialName("text_input")

@@ -23,10 +23,16 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
     @Volatile private var generation = 0
     @Volatile var isPlaying = false
         private set
+    private var headAtBegin = 0L
+
+    /** ms of the current reply that has actually come out of the speaker. */
+    val playedMs: Long
+        get() = track?.let { t -> ((t.playbackHeadPosition.toLong() and 0xffffffffL) - headAtBegin) * 1000 / t.sampleRate } ?: 0
 
     fun begin(sampleRate: Int) {
         stop()
         val t = track?.takeIf { it.sampleRate == sampleRate } ?: createTrack(sampleRate).also { track?.release(); track = it }
+        headAtBegin = t.playbackHeadPosition.toLong() and 0xffffffffL
         t.play()
         isPlaying = true
         if (thread == null) startThread()
@@ -36,12 +42,14 @@ class PcmPlayer(private val onDrained: (turnId: String) -> Unit) {
 
     fun end(turnId: String) { queue.put(Item.End(turnId)) }
 
-    /** Barge-in: drop everything queued and silence immediately. */
-    fun stop() {
+    /** Barge-in: drop everything queued and silence immediately. Returns how much had played (ms). */
+    fun stop(): Long {
+        val played = if (isPlaying) playedMs else 0
         generation++
         queue.clear()
         isPlaying = false
         track?.run { runCatching { pause(); flush() } }
+        return played
     }
 
     fun release() {
