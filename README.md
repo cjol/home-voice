@@ -70,6 +70,7 @@ Source of truth: [`shared/src/protocol.ts`](shared/src/protocol.ts) and [`shared
 | `end_session` | `reason?` | follow-up window over |
 | `interrupt` | | local barge-in |
 | `playback_done` | `turnId` | TTS finished playing |
+| `text_input` | `text` | typed/test input; runs a turn without STT |
 | `ui_event` | `uiId, action, value?` | tap on an overlay (TODO: wired to the LLM) |
 | `ping` | | |
 
@@ -77,7 +78,7 @@ Source of truth: [`shared/src/protocol.ts`](shared/src/protocol.ts) and [`shared
 
 | type | fields | meaning |
 |---|---|---|
-| `ready` | `v, model, tools` | `tools`: `connected` \| `auth_required` \| `error` |
+| `ready` | `v, model, tools` | `tools`: `connected` \| `auth_required` \| `error` \| `disabled` |
 | `state` | `state` | `idle` \| `listening` \| `thinking` \| `speaking` |
 | `transcript` | `text, final` | live STT |
 | `assistant_text` | `turnId, text` | caption of what is being spoken |
@@ -123,20 +124,39 @@ The policy is enforced only by the prompt. Code doesn't gate anything yet (see T
 
 ### Agent (Cloudflare)
 
+Deployed at `https://home-voice-agent.cjols.workers.dev`.
+
+`agent/` holds two gitignored files:
+- **`agent/.env`:** `CLOUDFLARE_API_TOKEN`, an account-owned token named `home-voice-deploy`. It's scoped to Workers Scripts write, Account Settings read, Workers AI read, Workers Tail read and Observability read, and expires 2027-01-19. Wrangler picks it up automatically, so `wrangler login` isn't needed. The `cf` CLI can't upload Worker scripts with its own login, and `cf deploy` needs the experimental `cloudflare.config.ts` format, so the deploy goes through wrangler.
+- **`agent/.dev.vars`:** `DEVICE_TOKEN`, the shared secret the tablet sends. `--secrets-file` uploads it as a secret on each deploy.
+
 ```sh
-npm install                    # at repo root (npm workspaces)
+npm install                    # at repo root (npm workspaces; .npmrc nests deps per workspace)
 npm run typecheck
-npx wrangler login             # wrangler is not logged in yet
 cd agent
-npx wrangler secret put DEVICE_TOKEN   # long random string; same value goes in the app
-npm run deploy                 # account 39f3f1b5073547672a0d7ad67319df81 is set in wrangler.jsonc
+npx wrangler deploy --secrets-file .dev.vars
+```
+
+Without `agent/.env`, create a token with `cf accounts tokens create` and the same scopes.
+
+**Test without a device:** `node scripts/smoke.mjs` plays the tablet. It streams a spoken PCM fixture over the WebSocket, prints every message, saves the TTS reply to `scripts/out/*.wav`, and reports the latency from end of turn to first audio.
+
+```sh
+scripts/make-fixtures.sh                         # espeak questions -> scripts/fixtures/*.raw
+node scripts/smoke.mjs math                      # audio path (Flux -> LLM -> Aura)
+node scripts/smoke.mjs "text:what's 7 times 6"   # skip STT
+IDLE_MS=30000 node scripts/smoke.mjs math        # idle first, so the DO hibernates
 ```
 
 **Local dev:**
-1. Run `cp .dev.vars.example agent/.dev.vars` and set a token.
-2. Run `npm run dev -w agent`, which binds to `laptop:8787`.
+1. Run `npm run dev -w agent`, which binds to `laptop:8787` and uses `agent/.dev.vars`.
+2. Point a client at it with `node scripts/smoke.mjs math http://laptop:8787`.
 
-Workers AI calls go to your account even in local dev. The Executor OAuth callback needs a public URL, so do the first sign-in against the deployed worker, or set `PUBLIC_URL`.
+Workers AI calls go to your account even in local dev.
+
+**Hibernation:** the Durable Object hibernates between sessions, which wipes its in-memory fields.
+- The device connection is re-attached from `getConnections()`.
+- Conversation history is persisted in DO storage. It's reset after 10 min idle.
 
 **Change the model** per device without redeploying:
 
@@ -151,7 +171,7 @@ Send `{"model":""}` to go back to the default. To change the default for all dev
 - `@cf/mistralai/mistral-small-3.1-24b-instruct` rejects requests that include tools.
 - `@cf/meta/llama-4-scout-17b-16e-instruct` prints tool calls as text instead of making them.
 
-**Executor sign-in:** the first time the tablet connects, the DO starts OAuth with dynamic client registration. The tablet shows a "Connect Executor" notification; tap it and sign in. The tokens persist in the DO.
+**Executor sign-in:** Executor is off by default (`EXECUTOR_ENABLED: "false"` in `wrangler.jsonc`), so the voice loop can be tested on its own. With it off, the model only has the `show_ui` tool. Once enabled, the first time the tablet connects, the DO starts OAuth with dynamic client registration. The tablet shows a "Connect Executor" notification; tap it and sign in. The tokens persist in the DO.
 
 ### Android
 
@@ -172,13 +192,29 @@ On the tablet:
 
 The default wake word is **"Hey Jarvis"**. Use **Test overlay** to check the UI path.
 
+### Emulator (no microphone needed)
+
+There's a Pixel Tablet AVD (`HomeVoice_Tablet`, API 35, x86_64). The emulator can't use host audio here (its Pulse driver fails to start), so debug builds take speech through `adb` instead.
+
+**How audio gets in:** the debug-only `DebugReceiver` lives in `src/debug/` and isn't in release builds. It injects PCM into the mic path. That runs the real wake-word model, streaming, the session timers and barge-in.
+
+```sh
+cd android
+scripts/emu.sh boot                       # headless emulator
+scripts/emu.sh install                    # build, install, grant perms incl. overlay, configure from agent/.dev.vars, start
+scripts/emu.sh speak "what is 7 times 6"  # espeak "Hey Jarvis." + question -> injected as mic audio
+scripts/emu.sh say "show me a chart"      # text turn, skips STT
+scripts/emu.sh logs                       # VoiceService log: session start/end, transcripts, replies, barge-in
+scripts/emu.sh shot /tmp/x.png            # screenshot (overlay)
+```
+
 ## Status / TODO
 
 These are known gaps, in rough priority order:
-- [ ] End-to-end test on the device (nothing has run against live Workers AI yet).
+- [x] End to end on the emulator against the deployed agent: the wake word (espeak "Hey Jarvis" scores 0.56–0.82), Flux, DeepSeek, Aura, the `show_ui` overlay coming to the front and auto-dismissing, and barge-in by wake word and by Flux `StartOfTurn`.
+- [ ] Try it on the real tablet: AEC on hardware, real voices, screen off, boot.
 - [ ] Verify openWakeWord scores against the Python reference, and tune the threshold.
 - [ ] Flux `CloseStream` on end of session, and speculative LLM start on `EagerEndOfTurn`.
-- [ ] Persist conversation history in DO SQL. It's in memory now and resets after 10 min idle.
 - [ ] Code-level confirmation gate for mutating tools, on top of the prompt policy.
 - [ ] Feed `ui_event` taps back into the conversation. Load images in cards.
 - [ ] Aura streaming over WebSocket (text in, audio out) once it's available on Workers AI. It's per-sentence HTTP now.
