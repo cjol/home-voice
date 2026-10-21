@@ -25,24 +25,26 @@ shared/    Versioned message protocol + generative UI schema (TS source of truth
  └─────────────────────────────────────────────────────────────┘  │
                                                                    │ wss
  Cloudflare: Worker ─► VoiceAgent DO (name = deviceId)  ◄──────────┘
-   ├─ Flux STT   @cf/deepgram/flux (WebSocket; detects end of turn)
+   ├─ Flux STT   @cf/deepgram/flux (WebSocket; detects end of turn; audio held until `Connected`)
    ├─ LLM        env.LLM_MODEL (default @cf/deepseek-ai/deepseek-v4.1-flash-1017), streamed, tool calls
    │    ├─ Executor MCP client  https://mcp.executor.sh/mcp  (OAuth 2.1 PKCE + DCR,
    │    │    tokens in DO storage via Agents SDK; results unwrapped before the model)
    │    └─ show_ui tool  → `ui` message to the tablet
-   └─ TTS        @cf/deepgram/aura-2-en, voice luna, per sentence as text streams
+   └─ TTS        @cf/deepgram/aura-2-en over its Speak WebSocket, voice luna, one socket per session
 ```
 
 A turn works like this:
 1. The wake word fires on the tablet. It beeps, sends `start_session` and starts streaming mic PCM.
-2. The DO opens a Flux WebSocket and forwards the audio. Flux sends interim transcripts and, at the end of the turn, `EndOfTurn`.
-3. The LLM streams its reply. The text is split into sentences, and each sentence goes to Aura as it completes. Requests run in parallel and the audio is played in order. The PCM is sent to the tablet between `tts_start` and `tts_end`.
+2. The DO opens a Flux WebSocket and, in parallel, an Aura socket, which takes about 0.5 s to open. It holds the audio until Flux says `Connected` (audio sent earlier can be lost), then sends the backlog at no more than 2× real time. Flux sends interim transcripts and, at the end of the turn, `EndOfTurn`.
+3. The LLM streams its reply. The text is split into sentences, and each sentence goes to Aura as Speak + Flush once the previous one is Flushed. First audio arrives about 0.1–0.3 s after the first sentence. The PCM is sent to the tablet between `tts_start` and `tts_end`.
 4. On tool calls, the agent speaks a short preamble first ("Let me check."). The model is prompted to say one itself, and code adds one if it doesn't. Then it runs the tools and loops, up to 5 rounds.
 5. After playback the tablet keeps streaming for an 8 s follow-up window. If nothing happens it sends `end_session` and goes back to wake-word-only listening.
 
 **Barge-in** has two paths:
-- **Server:** the mic keeps streaming during playback, with AEC on. A Flux `StartOfTurn` while the agent is thinking or speaking aborts the LLM and TTS and sends `stop_playback`.
-- **Local:** the wake word heard during playback flushes the AudioTrack and sends `interrupt`.
+- **Server:** the mic keeps streaming during playback, with AEC on. A Flux `StartOfTurn` while the agent is thinking or speaking aborts the LLM, sends Aura a `Clear` and sends `stop_playback`.
+- **Local:** the wake word heard mid-session flushes the AudioTrack and sends `interrupt`. A short turn right after it is treated as the wake word itself and dropped.
+
+**What was heard:** either way, the tablet reports `played` (ms of that reply that came out of the speaker, from the AudioTrack playback head). History keeps only the sentences heard, ending with "—". The prompt tells the model what the dash means, so it can offer to finish. Many of these patterns come from [cjol/voice-spike](https://github.com/cjol/voice-spike) (`spikes/runtime-host`).
 
 ### Why openWakeWord (not microWakeWord)
 
@@ -69,6 +71,7 @@ Source of truth: [`shared/src/protocol.ts`](shared/src/protocol.ts) and [`shared
 | `start_session` | `wakeWord?` | wake word fired; audio follows |
 | `end_session` | `reason?` | follow-up window over |
 | `interrupt` | | local barge-in |
+| `played` | `turnId, playedMs` | after a barge-in: how much of that reply played |
 | `playback_done` | `turnId` | TTS finished playing |
 | `text_input` | `text` | typed/test input; runs a turn without STT |
 | `ui_event` | `uiId, action, value?` | tap on an overlay (TODO: wired to the LLM) |
@@ -124,20 +127,21 @@ The policy is enforced only by the prompt. Code doesn't gate anything yet (see T
 
 ### Agent (Cloudflare)
 
-Deployed at `https://home-voice-agent.cjols.workers.dev`.
+Deployed at `https://home-voice-agent.cjols.workers.dev`. The config uses cf's native format:
+- **[`agent/cloudflare.config.ts`](agent/cloudflare.config.ts):** the Worker, its bindings and the `VoiceAgent` Durable Object export.
+- **[`agent/wrangler.config.ts`](agent/wrangler.config.ts):** tooling, such as binding the dev server to `laptop:8787`.
 
-`agent/` holds two gitignored files:
-- **`agent/.env`:** `CLOUDFLARE_API_TOKEN`, an account-owned token named `home-voice-deploy`. It's scoped to Workers Scripts write, Account Settings read, Workers AI read, Workers Tail read and Observability read, and expires 2027-01-19. Wrangler picks it up automatically, so `wrangler login` isn't needed. The `cf` CLI can't upload Worker scripts with its own login, and `cf deploy` needs the experimental `cloudflare.config.ts` format, so the deploy goes through wrangler.
-- **`agent/.dev.vars`:** `DEVICE_TOKEN`, the shared secret the tablet sends. `--secrets-file` uploads it as a secret on each deploy.
+`cf deploy` uses your `cf` login, so it needs no API token. `env` types are generated from the config by `cf workers types`, which `npm run typecheck` runs.
+
+Node 24 LTS is pinned in `mise.toml`, since the native config needs Node 22.18 or later. Run commands through `mise exec --`, or let mise activate in your shell.
 
 ```sh
 npm install                    # at repo root (npm workspaces; .npmrc nests deps per workspace)
-npm run typecheck
-cd agent
-npx wrangler deploy --secrets-file .dev.vars
+npm run typecheck              # regenerates agent/.cloudflare/types, then tsc
+npm run deploy -w agent        # cf deploy
 ```
 
-Without `agent/.env`, create a token with `cf accounts tokens create` and the same scopes.
+**Secrets:** `DEVICE_TOKEN` is the shared secret the tablet sends. It's declared in `cloudflare.config.ts` as `bindings.secret()`, set on the deployed Worker, and read from `agent/.dev.vars` (gitignored) for local dev and the test scripts. To rotate it, edit `.dev.vars`, then run `npx cf deploy --secrets-file .dev.vars`.
 
 **Test without a device:** `node scripts/smoke.mjs` plays the tablet. It streams a spoken PCM fixture over the WebSocket, prints every message, saves the TTS reply to `scripts/out/*.wav`, and reports the latency from end of turn to first audio.
 
@@ -165,13 +169,13 @@ curl -X POST "https://<worker>/agents/voice-agent/<deviceId>/config?token=$DEVIC
   -H 'content-type: application/json' -d '{"model":"@cf/openai/gpt-oss-120b"}'
 ```
 
-Send `{"model":""}` to go back to the default. To change the default for all devices, edit `LLM_MODEL` in `wrangler.jsonc`.
+Send `{"model":""}` to go back to the default. To change the default for all devices, edit `LLM_MODEL` in `cloudflare.config.ts`. `GET` on the same URL (without `/config`) returns the model, the MCP servers and the stored history.
 
 **Model choice:** the default is `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. In the model benchmark it was the only Workers AI model that answered all four test questions correctly through Executor, in 4–16 s. The model must make real tool calls. These two don't, and `/config` rejects them (the list is `NON_TOOL_MODELS` in `agent/src/llm.ts`):
 - `@cf/mistralai/mistral-small-3.1-24b-instruct` rejects requests that include tools.
 - `@cf/meta/llama-4-scout-17b-16e-instruct` prints tool calls as text instead of making them.
 
-**Executor sign-in:** Executor is off by default (`EXECUTOR_ENABLED: "false"` in `wrangler.jsonc`), so the voice loop can be tested on its own. With it off, the model only has the `show_ui` tool. Once enabled, the first time the tablet connects, the DO starts OAuth with dynamic client registration. The tablet shows a "Connect Executor" notification; tap it and sign in. The tokens persist in the DO.
+**Executor sign-in:** Executor is off by default (`EXECUTOR_ENABLED` in `cloudflare.config.ts`), so the voice loop can be tested on its own. With it off, the model only has the `show_ui` tool. Once enabled, the first time the tablet connects, the DO starts OAuth with dynamic client registration. The tablet shows a "Connect Executor" notification; tap it and sign in. The tokens persist in the DO.
 
 ### Android
 
@@ -214,9 +218,13 @@ These are known gaps, in rough priority order:
 - [x] End to end on the emulator against the deployed agent: the wake word (espeak "Hey Jarvis" scores 0.56–0.82), Flux, DeepSeek, Aura, the `show_ui` overlay coming to the front and auto-dismissing, and barge-in by wake word and by Flux `StartOfTurn`.
 - [ ] Try it on the real tablet: AEC on hardware, real voices, screen off, boot.
 - [ ] Verify openWakeWord scores against the Python reference, and tune the threshold.
-- [ ] Flux `CloseStream` on end of session, and speculative LLM start on `EagerEndOfTurn`.
+- [x] Aura over WebSocket, Flux `Connected`/pacing/silence fill, history cut to what was heard.
+- [ ] Talker/brain split for Executor (from voice-spike): a fast model talks, and slow tool work runs as a background `ask_brain` task whose answer arrives later. Do this when Executor is enabled.
+- [ ] Silero VAD on mic audio to drop words Flux invents from noise (voice-spike `adapters/vad.ts`).
+- [ ] Drop the wake word from a turn by Flux word timings rather than a regex. Today, when Flux merges it into the question, a mishearing such as "HRV" can get through.
+- [ ] Speculative LLM start on `EagerEndOfTurn`.
+- [ ] Show y-axis values on charts.
 - [ ] Code-level confirmation gate for mutating tools, on top of the prompt policy.
 - [ ] Feed `ui_event` taps back into the conversation. Load images in cards.
-- [ ] Aura streaming over WebSocket (text in, audio out) once it's available on Workers AI. It's per-sentence HTTP now.
 - [ ] Compare `USAGE_ASSISTANT` and `USAGE_VOICE_COMMUNICATION` playback for AEC quality.
 - [ ] Custom wake word training.
