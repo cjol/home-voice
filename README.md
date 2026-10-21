@@ -26,7 +26,7 @@ shared/    Versioned message protocol + generative UI schema (TS source of truth
                                                                    │ wss
  Cloudflare: Worker ─► VoiceAgent DO (name = deviceId)  ◄──────────┘
    ├─ Flux STT   @cf/deepgram/flux (WebSocket; detects end of turn)
-   ├─ LLM        env.LLM_MODEL (default @cf/openai/gpt-oss-120b), streamed, tool calls
+   ├─ LLM        env.LLM_MODEL (default @cf/deepseek-ai/deepseek-v4.1-flash-1017), streamed, tool calls
    │    ├─ Executor MCP client  https://mcp.executor.sh/mcp  (OAuth 2.1 PKCE + DCR,
    │    │    tokens in DO storage via Agents SDK; results unwrapped before the model)
    │    └─ show_ui tool  → `ui` message to the tablet
@@ -142,10 +142,14 @@ Workers AI calls go to your account even in local dev. The Executor OAuth callba
 
 ```sh
 curl -X POST "https://<worker>/agents/voice-agent/<deviceId>/config?token=$DEVICE_TOKEN" \
-  -H 'content-type: application/json' -d '{"model":"@cf/meta/llama-4-scout-17b-16e-instruct"}'
+  -H 'content-type: application/json' -d '{"model":"@cf/openai/gpt-oss-120b"}'
 ```
 
-To change the default for all devices, edit `LLM_MODEL` in `wrangler.jsonc`.
+Send `{"model":""}` to go back to the default. To change the default for all devices, edit `LLM_MODEL` in `wrangler.jsonc`.
+
+**Model choice:** the default is `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. In the model benchmark it was the only Workers AI model that answered all four test questions correctly through Executor, in 4–16 s. The model must make real tool calls. These two don't, and `/config` rejects them (the list is `NON_TOOL_MODELS` in `agent/src/llm.ts`):
+- `@cf/mistralai/mistral-small-3.1-24b-instruct` rejects requests that include tools.
+- `@cf/meta/llama-4-scout-17b-16e-instruct` prints tool calls as text instead of making them.
 
 **Executor sign-in:** the first time the tablet connects, the DO starts OAuth with dynamic client registration. The tablet shows a "Connect Executor" notification; tap it and sign in. The tokens persist in the DO.
 

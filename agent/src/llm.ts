@@ -16,6 +16,15 @@ export interface ToolDef {
   function: { name: string; description?: string; parameters: unknown };
 }
 
+/**
+ * Models that fail at tool calling through Executor (from the model benchmark).
+ * They are rejected as a configured model rather than silently degrading.
+ */
+export const NON_TOOL_MODELS: Record<string, string> = {
+  "@cf/mistralai/mistral-small-3.1-24b-instruct": "rejects requests that include tools",
+  "@cf/meta/llama-4-scout-17b-16e-instruct": "prints tool calls as text instead of making them",
+};
+
 export interface StreamResult {
   text: string;
   toolCalls: ToolCall[];
@@ -23,7 +32,7 @@ export interface StreamResult {
 
 /**
  * Streams a chat completion from Workers AI. Handles both the OpenAI-compatible
- * delta format (gpt-oss, newer models) and the legacy `{response, tool_calls}`
+ * delta format (DeepSeek, gpt-oss, newer models) and the legacy `{response, tool_calls}`
  * format so LLM_MODEL can be swapped without code changes.
  */
 export async function streamChat(

@@ -10,7 +10,7 @@ import {
 } from "@home-voice/shared";
 import type { Env } from "./env";
 import { FluxStt, type FluxEvent } from "./stt";
-import { streamChat, type ChatMessage, type ToolDef } from "./llm";
+import { NON_TOOL_MODELS, streamChat, type ChatMessage, type ToolDef } from "./llm";
 import { TtsQueue } from "./tts";
 import { SentenceChunker, speakable } from "./sentences";
 import { systemPrompt } from "./prompt";
@@ -109,6 +109,8 @@ export class VoiceAgent extends Agent<Env, State> {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname.endsWith("/config")) {
       const body = (await request.json()) as { model?: string };
+      const why = body.model ? NON_TOOL_MODELS[body.model] : undefined;
+      if (why) return Response.json({ error: `${body.model} can't be used: ${why}` }, { status: 400 });
       this.setState({ ...this.state, model: body.model || undefined });
       return Response.json({ model: this.model });
     }

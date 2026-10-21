@@ -11,8 +11,9 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VoiceAgent"] }],
   "vars": {
-    // Swap freely; benchmark still evaluating. Any Workers AI chat model with tool calling.
-    "LLM_MODEL": "@cf/openai/gpt-oss-120b",
+    // Benchmark winner: only Workers AI model to answer all 4 Executor test questions (4-16 s).
+    // Must support real tool calls; see NON_TOOL_MODELS in src/llm.ts for known-bad ones.
+    "LLM_MODEL": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
     "TTS_VOICE": "luna",
     "EXECUTOR_MCP_URL": "https://mcp.executor.sh/mcp"
     // PUBLIC_URL (OAuth callback host) is derived from the request if unset.
