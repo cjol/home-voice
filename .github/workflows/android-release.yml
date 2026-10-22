@@ -17,27 +17,26 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the version is the commit count
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
 
-      # Releases must keep the key existing installs were signed with: the share build type signs
-      # with the debug config, which reads ~/.android/debug.keystore.
+      # Releases must keep the key existing installs were signed with (the share signing config).
       - name: Install signing key
         env:
           KEYSTORE_B64: ${{ secrets.SHARE_KEYSTORE_B64 }}
         run: |
           test -n "$KEYSTORE_B64" || { echo "SHARE_KEYSTORE_B64 secret is missing"; exit 1; }
-          mkdir -p ~/.android
-          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/share.keystore"
+          echo "SHARE_KEYSTORE=$RUNNER_TEMP/share.keystore" >> "$GITHUB_ENV"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: android/app/src/main/assets/wakeword/*.onnx
           key: wakeword-${{ hashFiles('android/scripts/fetch-models.sh') }}
@@ -47,6 +46,14 @@ jobs:
 
       - name: Build
         run: android/scripts/build-share.sh
+
+      - name: Check signing certificate
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$apksigner" verify --print-certs dist/*.apk | grep -q "SHA-256 digest: $SIGNING_CERT_SHA256" \
+            || { echo "APK is not signed with the expected key; installed copies could not update"; exit 1; }
+        env:
+          SIGNING_CERT_SHA256: 67f0ec1d861cac28d613eb0f4ff1d8dd192ed92d091ef510aa3ff2395ebabe3e
 
       - name: Publish release
         env:

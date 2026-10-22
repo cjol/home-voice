@@ -21,6 +21,16 @@ android {
         versionName = "0.1.$commitCount"
     }
 
+    signingConfigs {
+        // The development key existing installs were signed with. CI supplies it through SHARE_KEYSTORE.
+        create("share") {
+            storeFile = file(System.getenv("SHARE_KEYSTORE") ?: "${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug { ndk { abiFilters += listOf("arm64-v8a", "x86_64") } }
         release {
@@ -31,7 +41,7 @@ android {
         // key for upgrade compatibility, without debug receivers or tooling.
         create("share") {
             initWith(getByName("release"))
-            signingConfig = getByName("debug").signingConfig
+            signingConfig = signingConfigs.getByName("share")
             matchingFallbacks += "release"
             ndk {
                 abiFilters.clear()
