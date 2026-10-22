@@ -1,0 +1,32 @@
+# Typechecks and deploys the Cloudflare Worker on every push to main that touches the agent or the shared protocol.
+name: Agent deploy
+
+on:
+  push:
+    branches: [main]
+    paths: [agent/**, shared/**, package.json, package-lock.json, .github/workflows/agent-deploy.yml]
+  workflow_dispatch:
+
+concurrency: agent-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Account token "home-voice-ci-deploy": Workers Scripts Write + Account Settings Read, expires 2027-10-22.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 39f3f1b5073547672a0d7ad67319df81
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1 # keep in step with mise.toml
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unwrap -w agent
+
+      # DEVICE_TOKEN is already set on the Worker; a deploy without --secrets-file keeps it.
+      - run: npm run deploy -w agent

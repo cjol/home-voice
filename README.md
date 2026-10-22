@@ -141,14 +141,19 @@ Deployed at `https://home-voice-agent.cjols.workers.dev`. The config uses cf's n
 - **[`agent/cloudflare.config.ts`](agent/cloudflare.config.ts):** the Worker, its bindings and the `VoiceAgent` Durable Object export.
 - **[`agent/wrangler.config.ts`](agent/wrangler.config.ts):** tooling, such as binding the dev server to `laptop:8787`.
 
-`cf deploy` uses your `cf` login, so it needs no API token. `env` types are generated from the config by `cf workers types`, which `npm run typecheck` runs.
+**CI deploys:** [`.github/workflows/agent-deploy.yml`](.github/workflows/agent-deploy.yml) typechecks and runs `cf deploy` on every push to `main` that touches `agent/`, `shared/` or the npm manifests. It authenticates with the `CLOUDFLARE_API_TOKEN` repository secret, the account token `home-voice-ci-deploy`:
+- **ID:** `e85fdc6c7e28277046c1ff27b254681b`
+- **Scopes:** Workers Scripts write, Account Settings read
+- **Expires:** 2027-10-22
+
+Locally, `cf` runs inside `agent/` and loads `agent/.env`, so `npm run deploy -w agent` uses the `home-voice-dev` token below if that file exists, and your `cf` login otherwise. `env` types are generated from the config by `cf workers types`, which `npm run typecheck` runs.
 
 Node 24 LTS is pinned in `mise.toml`, since the native config needs Node 22.18 or later. Run commands through `mise exec --`, or let mise activate in your shell.
 
 ```sh
 npm install                    # at repo root (npm workspaces; .npmrc nests deps per workspace)
 npm run typecheck              # regenerates agent/.cloudflare/types, then tsc
-npm run deploy -w agent        # cf deploy
+npm run deploy -w agent        # cf deploy (CI does this on push to main)
 ```
 
 **Secrets:** `DEVICE_TOKEN` is the shared secret the tablet sends. It's declared in `cloudflare.config.ts` as `bindings.secret()`, set on the deployed Worker, and read from `agent/.dev.vars` (gitignored) for local dev and the test scripts. To rotate it, edit `.dev.vars`, then run `npx cf deploy --secrets-file .dev.vars`.
@@ -171,7 +176,7 @@ Workers AI is always remote, even in local dev, and that needs wrangler credenti
 - **Scopes:** Workers Scripts write, Account Settings read, Workers AI read
 - **Expires:** 2027-01-19
 
-Deploys don't use this token.
+Local `cf` commands run from `agent/`, including `npm run deploy -w agent`, also use this token. Run account-level `cf` commands from the repository root to use your login.
 
 **Hibernation:** the Durable Object hibernates between sessions, which wipes its in-memory fields.
 - The device connection is re-attached from `getConnections()`.
