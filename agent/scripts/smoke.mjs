@@ -72,6 +72,7 @@ ws.onmessage = (ev) => {
     }
   }
   if (m.type === "tts_end") setTimeout(() => finish(0), 300);
+  if (m.type === "ignored") setTimeout(() => finish(0), 300); // the agent judged it not meant for it
   if (m.type === "error") finish(1);
 };
 ws.onerror = (e) => { console.log(`${ts()} ws error`, e.message ?? e); };

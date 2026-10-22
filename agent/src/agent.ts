@@ -24,9 +24,23 @@ const HISTORY_IDLE_RESET_MS = 10 * 60_000;
 const PREAMBLE = "Let me check.";
 /** Tools that only draw on the device: no preamble, and a reply that already spoke needn't go round again. */
 const UI_TOOLS = new Set(["show_ui", "close_ui"]);
+/** Lets the model decline speech that wasn't meant for it (a false wake, background talk). First round only. */
+const IGNORE_TOOL = "ignore";
 /** A short turn ending this soon after a wake-word barge-in is the wake word itself (Flux may hear "Hey Jarvis" as "HRV"). */
 const WAKE_ECHO_MS = 4_000;
 const WAKE_PREFIX = /^\s*(hey|hi|okay|ok)[,\s]+jarvis\b[,.!?\s]*/i;
+
+const IGNORE_DEF: ToolDef = {
+  type: "function",
+  function: {
+    name: IGNORE_TOOL,
+    description:
+      "Call this alone, with no spoken text, when the user's words were not meant for you: a fragment of speech, " +
+      "background conversation or TV, or a non sequitur unrelated to the conversation. You stay silent and the " +
+      "device goes back to waiting for the wake word.",
+    parameters: { type: "object", properties: { reason: { type: "string", description: "A few words, for logs." } } },
+  },
+};
 
 interface Turn {
   id: string;
@@ -150,6 +164,13 @@ export class VoiceAgent extends Agent<Env, State> {
   }
 
   /** Lets you change the model per device without redeploying. */
+  /** Clears history after HISTORY_IDLE_RESET_MS idle and tells the device, so its transcript matches. */
+  private resetIfIdle() {
+    if (Date.now() - this.lastTurnAt <= HISTORY_IDLE_RESET_MS) return;
+    this.history = [];
+    this.send({ type: "new_conversation" });
+  }
+
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname.endsWith("/config")) {
@@ -275,6 +296,8 @@ export class VoiceAgent extends Agent<Env, State> {
 
   private async startSession() {
     console.log("session start", { sttOpen: !!this.stt?.isOpen });
+    await this.loadHistory();
+    this.resetIfIdle();
     this.auraFor().warm(); // opening an Aura socket costs ~0.5 s; do it while the user speaks
     if (!this.stt) {
       const stt: FluxStt = new FluxStt(this.env, {
@@ -381,9 +404,10 @@ export class VoiceAgent extends Agent<Env, State> {
     await this.loadHistory();
     this.settleInterrupted(); // no `played` report came in time: use the estimate
     this.dropDanglingToolCalls();
-    if (Date.now() - this.lastTurnAt > HISTORY_IDLE_RESET_MS) this.history = [];
+    this.resetIfIdle();
+    const prevTurnAt = this.lastTurnAt;
     this.lastTurnAt = Date.now();
-    this.history.push({ role: "user", content: userText });
+    const userIndex = this.history.push({ role: "user", content: userText }) - 1;
     this.setVoiceState("thinking");
 
     const turn: Turn = {
@@ -425,13 +449,24 @@ export class VoiceAgent extends Agent<Env, State> {
           this.env,
           this.model,
           messages,
-          round < MAX_TOOL_ROUNDS ? tools : [],
+          round === 0 ? [...tools, IGNORE_DEF] : round < MAX_TOOL_ROUNDS ? tools : [],
           (d) => chunker.push(d).forEach(say),
           signal,
         );
         const rest = chunker.flush();
         if (rest) say(rest);
 
+        const ignore = toolCalls.find((c) => c.function.name === IGNORE_TOOL);
+        if (ignore) {
+          // Not meant for us: say nothing, and leave no trace in history or the idle clock.
+          console.log("turn ignored", { userText, args: ignore.function.arguments });
+          await turn.tts.abort();
+          if (turn.tts.started) this.send({ type: "stop_playback", turnId: turn.id });
+          this.history.splice(userIndex);
+          this.lastTurnAt = prevTurnAt;
+          this.send({ type: "ignored" });
+          return;
+        }
         if (!toolCalls.length) {
           turn.replyIndex = this.history.push({ role: "assistant", content: text }) - 1;
           break;

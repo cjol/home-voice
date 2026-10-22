@@ -17,7 +17,12 @@ import java.nio.FloatBuffer
  * Models are fetched by android/scripts/fetch-models.sh into assets/wakeword/.
  * TODO: verify scores against the Python reference on recorded samples.
  */
-class OpenWakeWord(context: Context, private val threshold: Float = 0.5f) : AutoCloseable {
+class OpenWakeWord(context: Context, private val threshold: Float = 0.7f, private val patience: Int = PATIENCE) : AutoCloseable {
+    companion object {
+        /** Consecutive 80 ms chunks at or above the threshold. A real wake word scores high for several. */
+        const val PATIENCE = 2
+    }
+
     private val env = OrtEnvironment.getEnvironment()
     private val opts = OrtSession.SessionOptions().apply { setIntraOpNumThreads(1) }
     private val mel = session(context, "melspectrogram.onnx")
@@ -29,6 +34,7 @@ class OpenWakeWord(context: Context, private val threshold: Float = 0.5f) : Auto
     private val melFrames = ArrayDeque<FloatArray>().apply { repeat(76) { addLast(FloatArray(32) { 1f }) } }
     private val features = ArrayDeque<FloatArray>()
     private var cooldownChunks = 0
+    private var aboveChunks = 0
 
     private fun session(ctx: Context, name: String): OrtSession =
         env.createSession(ctx.assets.open("wakeword/$name").use { it.readBytes() }, opts)
@@ -75,7 +81,9 @@ class OpenWakeWord(context: Context, private val threshold: Float = 0.5f) : Auto
         }
         lastScore = score
         if (cooldownChunks > 0) { cooldownChunks--; return false }
-        if (score >= threshold) {
+        aboveChunks = if (score >= threshold) aboveChunks + 1 else 0
+        if (aboveChunks >= patience) {
+            aboveChunks = 0
             cooldownChunks = 25 // ~2 s refractory period
             return true
         }

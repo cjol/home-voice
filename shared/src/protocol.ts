@@ -59,4 +59,8 @@ export type ServerMessage =
   /** Executor needs OAuth; the device shows this URL (open on any browser). */
   | { type: "auth_required"; url: string }
   | { type: "error"; message: string }
+  /** The agent judged the last utterance not meant for it: drop it from the transcript and stop listening. */
+  | { type: "ignored" }
+  /** Server history was reset (idle too long): clear earlier turns from the on-screen transcript. */
+  | { type: "new_conversation" }
   | { type: "pong" };

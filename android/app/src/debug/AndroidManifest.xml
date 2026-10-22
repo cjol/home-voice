@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only: adb control surface for emulator/device testing. -->
+<!-- Debug builds only: adb control surface for emulator/device testing, and plain ws:// to a local `wrangler dev`. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <application android:usesCleartextTraffic="true">
         <receiver
             android:name=".debug.DebugReceiver"
             android:exported="true"

@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.res.painterResource
 import net.littlesavage.homevoice.R
 import androidx.compose.animation.core.*
@@ -143,7 +144,8 @@ private fun PanelHost(visible: MutableStateFlow<Boolean>, onDismiss: () -> Unit)
     ui?.let { u -> LaunchedEffect(u) { val ttl = u.ttlMs ?: 20_000L; if (ttl > 0) { delay(ttl); UiBus.closeLocally(u) } } }
     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.BottomCenter) {
         AnimatedVisibility(visible = show, enter = slideInVertically { it / 2 } + fadeIn(), exit = slideOutVertically { it / 2 } + fadeOut()) {
-            Panel(convo, if (fullscreen) emptyList() else convo.turns, ui, onDismiss)
+            val hidden by UiBus.transcriptHidden.collectAsState()
+            Panel(convo, if (fullscreen || (hidden && ui != null)) emptyList() else convo.turns, ui, onDismiss)
         }
     }
 }
@@ -168,7 +170,7 @@ private fun Panel(convo: ConversationState, turns: List<Turn>, ui: UiMessage?, o
                 UiView(it, scale = 0.6f)
             }
         }
-        ConversationControls(convo, onEnd = onDismiss)
+        ConversationControls(convo, hasUi = ui != null, onEnd = onDismiss)
     }
 }
 
@@ -185,11 +187,21 @@ fun StateLine(convo: ConversationState) {
     }
 }
 
-/** One bottom action: stop speech first, then end the listening session on the next tap. */
+/**
+ * One bottom action: stop speech first, then end the listening session on the next tap.
+ * With a generated screen up, a toggle on the left hides the conversation (ending it) or shows it again.
+ */
 @Composable
-fun ConversationControls(convo: ConversationState, onEnd: () -> Unit = { UiBus.onConversationClosed?.invoke() }) {
+fun ConversationControls(convo: ConversationState, hasUi: Boolean = false, onEnd: () -> Unit = { UiBus.onConversationClosed?.invoke() }) {
     val speaking = convo.active && convo.state == "speaking"
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    val hidden by UiBus.transcriptHidden.collectAsState()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (hasUi) {
+            TextButton(onClick = { if (hidden) UiBus.transcriptHidden.value = false else UiBus.hideTranscript() }) {
+                Text(if (hidden) "Show conversation" else "Hide conversation", color = Color(0xFFB0B0B8), fontSize = 15.sp)
+            }
+        }
+        Spacer(Modifier.weight(1f))
         FilledTonalIconButton(
             onClick = { if (speaking) UiBus.onInterrupt?.invoke() else onEnd() },
             modifier = Modifier.size(48.dp),

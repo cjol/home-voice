@@ -69,6 +69,10 @@ sealed interface ServerMessage {
     data class AuthRequired(val url: String) : ServerMessage
     @Serializable @SerialName("error")
     data class Error(val message: String) : ServerMessage
+    @Serializable @SerialName("ignored")
+    data object Ignored : ServerMessage
+    @Serializable @SerialName("new_conversation")
+    data object NewConversation : ServerMessage
     @Serializable @SerialName("pong")
     data object Pong : ServerMessage
 }

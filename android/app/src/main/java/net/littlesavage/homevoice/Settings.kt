@@ -20,8 +20,9 @@ class Settings(context: Context) {
             prefs.edit().putString("deviceId", it).apply()
         }
 
+    /** openWakeWord score needed to wake. 0.5 fired on background speech on the tablet. */
     var wakeThreshold: Float
-        get() = prefs.getFloat("wakeThreshold", 0.5f)
+        get() = prefs.getFloat("wakeThreshold", 0.7f)
         set(v) = prefs.edit().putFloat("wakeThreshold", v).apply()
 
     var enabled: Boolean

@@ -10,7 +10,7 @@ import net.littlesavage.homevoice.ui.StartActivity
 
 /**
  * Debug-only adb control (not in release builds). See android/scripts/emu.sh.
- *   adb shell am broadcast -n net.littlesavage.homevoice/.debug.DebugReceiver -a net.littlesavage.homevoice.debug.CONFIG --es serverUrl https://... --es token ...
+ *   adb shell am broadcast -n net.littlesavage.homevoice/.debug.DebugReceiver -a net.littlesavage.homevoice.debug.CONFIG --es serverUrl https://... --es token ... [--ef wakeThreshold 0.5]
  *   ... -a net.littlesavage.homevoice.debug.SAY    --es text "what time is it"   (text turn, skips STT)
  *   ... -a net.littlesavage.homevoice.debug.INJECT --es path /data/data/net.littlesavage.homevoice/files/x.raw
  */
@@ -22,6 +22,7 @@ class DebugReceiver : BroadcastReceiver() {
                 val s = Settings(context)
                 intent.getStringExtra("serverUrl")?.let { s.serverUrl = it }
                 intent.getStringExtra("token")?.let { s.token = it }
+                if (intent.hasExtra("wakeThreshold")) s.wakeThreshold = intent.getFloatExtra("wakeThreshold", s.wakeThreshold)
                 s.enabled = true
                 VoiceService.stop(context)
                 // A mic service must be started from the foreground: go through the invisible StartActivity.

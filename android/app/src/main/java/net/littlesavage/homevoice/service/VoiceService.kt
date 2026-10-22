@@ -46,7 +46,7 @@ import net.littlesavage.homevoice.wakeword.OpenWakeWord
  */
 class VoiceService : LifecycleService() {
 
-    data class Status(val connected: Boolean = false, val mode: String = "stopped", val agent: String = "idle", val lastTranscript: String = "", val lastReply: String = "", val wakeScore: Float = 0f)
+    data class Status(val connected: Boolean = false, val mode: String = "stopped", val agent: String = "idle", val lastTranscript: String = "", val lastReply: String = "", val wakeScore: Float = 0f, val lastWakeScore: Float = 0f)
 
     companion object {
         private const val TAG = "VoiceService"
@@ -238,6 +238,7 @@ class VoiceService : LifecycleService() {
         }
         tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
         Log.i(TAG, "session start (wake score ${wakeWord?.lastScore})")
+        if (sendStart) publish { it.copy(lastWakeScore = wakeWord?.lastScore ?: 0f) }
         inSession = true
         deadline = SystemClock.elapsedRealtime() + NO_SPEECH_MS
         if (sendStart) c.send(ClientMessage.StartSession(wakeWord = "hey_jarvis"))
@@ -294,6 +295,7 @@ class VoiceService : LifecycleService() {
                     Log.i(TAG, "assistant: ${msg.text}")
                     publish { it.copy(lastReply = msg.text) }
                     Conversation.reply(msg.turnId, msg.text)
+                    UiBus.transcriptHidden.value = false // a real exchange: bring the conversation back
                 }
                 is ServerMessage.TtsStart -> {
                     Log.i(TAG, "tts start")
@@ -316,6 +318,13 @@ class VoiceService : LifecycleService() {
                     Log.i(TAG, "ready model=${msg.model} tools=${msg.tools}")
                     client?.send(ClientMessage.UiState(UiBus.openIds()))
                 }
+                ServerMessage.Ignored -> {
+                    // Not meant for the agent (false wake, background talk): drop it and stop listening.
+                    Log.i(TAG, "agent ignored the last utterance")
+                    Conversation.dropLast()
+                    endSession("ignored")
+                }
+                ServerMessage.NewConversation -> Conversation.startFresh()
                 ServerMessage.Pong -> Unit
             }
         }

@@ -73,7 +73,9 @@ class OverlayActivity : ComponentActivity() {
         setContent {
             val ui by UiBus.fullscreen.collectAsState()
             val convo by Conversation.state.collectAsState()
+            val hidden by UiBus.transcriptHidden.collectAsState()
             val current = ui
+            val showTurns = current == null || !hidden
             // Keyed on the content, so a replacement (same id, new rows) restarts the timer.
             LaunchedEffect(current) {
                 val ttl = current?.ttlMs ?: 0L
@@ -107,9 +109,9 @@ class OverlayActivity : ComponentActivity() {
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             StateLine(convo)
-                            Transcript(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20,
+                            if (showTurns) Transcript(convo.turns, maxTurns = 3, textSize = if (compact) 16 else 20,
                                 modifier = Modifier.weight(1f, fill = current == null))
-                            ConversationControls(convo)
+                            ConversationControls(convo, hasUi = current != null)
                         }
                     }
                 }

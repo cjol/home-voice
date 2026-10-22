@@ -89,6 +89,8 @@ Source of truth: [`shared/src/protocol.ts`](shared/src/protocol.ts) and [`shared
 | `dismiss_ui` | `uiId?` | |
 | `auth_required` | `url` | Executor OAuth needed; the tablet posts a tap-to-sign-in notification |
 | `error` | `message` | |
+| `ignored` | | the agent judged the last utterance not meant for it; the device drops it from the transcript and ends the session |
+| `new_conversation` | | history was reset after 10 min idle; the device clears earlier turns from the transcript |
 
 **UiMessage v1:** fields common to all kinds are `{v:1, id, title?, ttlMs?, display?}`, plus one of the following.
 - `card`: `body, subtitle?, imageUrl?, tone?`
@@ -230,6 +232,8 @@ scripts/emu.sh logs                       # VoiceService log: session start/end,
 scripts/emu.sh shot /tmp/x.png            # screenshot (overlay)
 ```
 
+Debug builds allow plain `ws://`, so the emulator can use a local `wrangler dev`: `adb reverse tcp:8787 tcp:<port>` to a host port that reaches `laptop:8787`, then `AGENT_URL=http://127.0.0.1:8787 scripts/emu.sh install`.
+
 ## Status / TODO
 
 These are known gaps, in rough priority order:
@@ -252,7 +256,10 @@ These are known gaps, in rough priority order:
 
 ### Conversation and playback behaviour
 
-- Each device has one history containing up to 12 user turns. The next request after 10 minutes without a new turn clears that history. Closing the transcript ends listening but does not erase history. Open generated screens remain separate context until closed.
+- Each device has one history containing up to 12 user turns. The next session or request after 10 minutes without a new turn clears that history, and the agent sends `new_conversation` so the on-screen transcript drops the old turns too.
+- **Speech not meant for the assistant:** in the first round of a turn the model also gets an `ignore` tool. It calls it, silently, for fragments, talk addressed to someone else and non sequiturs. The utterance is removed from history and the idle clock, and the tablet drops it from the transcript and goes back to wake-word listening.
+- **Wake word sensitivity:** the default threshold is 0.7 (it was 0.5, which fired on background speech), and the score must stay above it for two consecutive 80 ms chunks. Adjust the threshold with the slider on the settings screen; "Last wake" shows the score of the most recent activation. `scripts/emu.sh install` sets 0.5 because espeak scores lower than real voices (`WAKE_THRESHOLD` overrides).
+- **Hide conversation:** with a generated screen up, both views show a "Hide conversation" button. It ends the conversation and leaves only the screen, the status line and the end/stop button. The transcript comes back with the next reply; speech the agent ignores doesn't bring it back. Closing the transcript ends listening but does not erase history. Open generated screens remain separate context until closed.
 - Wake detection sends a two-second local pre-roll buffer to STT, preserving words spoken immediately after “Hey Jarvis”. Audio stays local before detection.
 - Transcript text scrolls inside a bounded area without animating the overlay's size on each update. Full-screen views use smaller margins and text on phones, with a separately scrollable transcript.
 - TTS socket closure and a missing flush acknowledgement fail the turn instead of leaving it speaking indefinitely. Playback completion uses the hardware playback head, with a bounded drain wait.

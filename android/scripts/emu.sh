@@ -34,7 +34,8 @@ case "${1:-}" in
     "$ADB" shell appops set $PKG SYSTEM_ALERT_WINDOW allow
     "$ADB" shell dumpsys deviceidle whitelist +$PKG >/dev/null
     TOKEN=$(grep -oP 'DEVICE_TOKEN=\K\S+' ../agent/.dev.vars)
-    "$ADB" shell am broadcast -n $RX -a $PKG.debug.CONFIG --es serverUrl "$AGENT_URL" --es token "$TOKEN" >/dev/null
+    "$ADB" shell am broadcast -n $RX -a $PKG.debug.CONFIG --es serverUrl "$AGENT_URL" --es token "$TOKEN" \
+      --ef wakeThreshold "${WAKE_THRESHOLD:-0.5}" >/dev/null # espeak "Hey Jarvis" scores 0.56-0.82
     echo "installed and started against $AGENT_URL" ;;
   say)
     "$ADB" shell am broadcast -n $RX -a $PKG.debug.SAY --es text "'${2:?text}'" >/dev/null ;;

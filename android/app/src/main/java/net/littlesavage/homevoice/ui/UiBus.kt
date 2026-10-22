@@ -23,6 +23,12 @@ object Conversation {
     fun clear() = _state.update { if (it.active) it else ConversationState() }
     fun setState(s: String) = _state.update { it.copy(state = s) }
 
+    /** The agent reset its history: keep only the turn in progress (one without a reply yet). */
+    fun startFresh() = _state.update { c -> c.copy(turns = c.turns.takeLast(1).filter { it.reply.isEmpty() }) }
+
+    /** The agent ignored the last utterance (not meant for it): take it off the screen. */
+    fun dropLast() = _state.update { it.copy(turns = it.turns.dropLast(1)) }
+
     /** Speech after a finished reply starts a new turn; otherwise it updates the current one. */
     fun utterance(text: String, final: Boolean) = _state.update { c ->
         val last = c.turns.lastOrNull()
@@ -48,6 +54,17 @@ object UiBus {
     val panel: StateFlow<UiMessage?> = _panel
     private val _fullscreen = MutableStateFlow<UiMessage?>(null)
     val fullscreen: StateFlow<UiMessage?> = _fullscreen
+
+    /**
+     * With a screen up, show only the screen and the controls. Hiding ends the conversation; the
+     * transcript comes back with the next reply (speech the agent ignores doesn't count).
+     */
+    val transcriptHidden = MutableStateFlow(false)
+
+    fun hideTranscript() {
+        transcriptHidden.value = true
+        onConversationClosed?.invoke()
+    }
 
     /** Set by OverlayActivity while it's in front (the panel steps aside unless it has UI of its own). */
     val fullscreenVisible = MutableStateFlow(false)

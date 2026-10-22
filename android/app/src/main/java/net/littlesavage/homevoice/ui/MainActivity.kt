@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import net.littlesavage.homevoice.Settings
 import net.littlesavage.homevoice.protocol.UiMessage
 import net.littlesavage.homevoice.service.VoiceService
@@ -59,6 +60,13 @@ class MainActivity : ComponentActivity() {
                 }) { Text("Save & start") }
                 OutlinedButton(onClick = { settings.enabled = false; VoiceService.stop(this@MainActivity) }) { Text("Stop") }
             }
+            var threshold by remember { mutableFloatStateOf(settings.wakeThreshold) }
+            Text("Wake word threshold: ${"%.2f".format(threshold)} (higher wakes less often; applies on Save & start)")
+            Slider(
+                value = threshold, onValueChange = { threshold = (it * 20).roundToInt() / 20f },
+                onValueChangeFinished = { settings.wakeThreshold = threshold },
+                valueRange = 0.3f..0.95f,
+            )
             HorizontalDivider()
             Text("Permissions for background use", style = MaterialTheme.typography.titleMedium)
             OutlinedButton(onClick = {
@@ -80,7 +88,7 @@ class MainActivity : ComponentActivity() {
             HorizontalDivider()
             Text("Status", style = MaterialTheme.typography.titleMedium)
             Text("Connected: ${status.connected}   Mode: ${status.mode}   Agent: ${status.agent}")
-            Text("Wake score: ${"%.2f".format(status.wakeScore)}")
+            Text("Wake score: ${"%.2f".format(status.wakeScore)}   Last wake: ${"%.2f".format(status.lastWakeScore)}")
             Text("You: ${status.lastTranscript}")
             Text("Assistant: ${status.lastReply}")
         }
