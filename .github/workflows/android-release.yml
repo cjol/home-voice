@@ -1,0 +1,58 @@
+# Builds the share APK on every push to main that touches the app, and publishes it as a GitHub release
+# (tag v0.1.<commit count>). The tablet picks releases up through Obtainium (see android/SHARING.md).
+name: Android release
+
+on:
+  push:
+    branches: [main]
+    paths: [android/**, .github/workflows/android-release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: android-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the version is the commit count
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # Releases must keep the key existing installs were signed with: the share build type signs
+      # with the debug config, which reads ~/.android/debug.keystore.
+      - name: Install signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.SHARE_KEYSTORE_B64 }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "SHARE_KEYSTORE_B64 secret is missing"; exit 1; }
+          mkdir -p ~/.android
+          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+
+      - uses: actions/cache@v4
+        with:
+          path: android/app/src/main/assets/wakeword/*.onnx
+          key: wakeword-${{ hashFiles('android/scripts/fetch-models.sh') }}
+
+      - name: Fetch wake-word models
+        run: test -f android/app/src/main/assets/wakeword/wakeword.onnx || android/scripts/fetch-models.sh
+
+      - name: Build
+        run: android/scripts/build-share.sh
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="0.1.$(git rev-list --count HEAD)"
+          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          notes=$(git log --pretty='- %s' ${prev:+$prev..}HEAD -- android | head -30)
+          gh release create "v$version" dist/*.apk --title "Home Voice $version" --notes "${notes:-Rebuild.}"

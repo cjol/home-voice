@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val commitCount = providers.exec { commandLine("git", "rev-list", "--count", "HEAD"); isIgnoreExitValue = true }
+    .standardOutput.asText.map { it.trim().toIntOrNull() ?: 1 }.get()
+
 android {
     namespace = "net.littlesavage.homevoice"
     compileSdk = 35
@@ -13,8 +16,9 @@ android {
         applicationId = "net.littlesavage.homevoice"
         minSdk = 33 // Pixel Tablet ships Android 13+
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Commit count on main: always increases, so each release installs over the last (see .github/workflows).
+        versionCode = commitCount
+        versionName = "0.1.$commitCount"
     }
 
     buildTypes {

@@ -2,7 +2,7 @@ Home Voice — personal Android preview
 
 Works on Pixel Tablet and other ARM64 Android devices running Android 13 or newer.
 
-1. Send home-voice-0.1.0-arm64.apk to the device and open it. Android may ask you
+1. Send home-voice-<version>-arm64.apk to the device and open it. Android may ask you
    to allow installing apps from the app you used to open the file. Install Home Voice.
 2. Open Home Voice. Enter:
    Agent URL: https://home-voice-agent.cjols.workers.dev
@@ -19,6 +19,22 @@ listener entirely with Stop listening in its expanded notification.
 
 Tables stay open until closed with their X. Ending a conversation leaves a table
 open so you can continue it later. Each device has its own conversation history.
+
+Automatic updates
+-----------------
+Every push to main that changes the app publishes a GitHub release of
+cjol/home-voice (tag v0.1.<n>) with the APK attached. To pick them up:
+
+1. Install Obtainium (https://github.com/ImranR98/Obtainium/releases) on the device.
+2. The repository is private, so create a fine-grained GitHub token with read-only
+   "Contents" access to cjol/home-voice only. In Obtainium's settings, paste it
+   as the GitHub personal access token.
+3. Add app: https://github.com/cjol/home-voice. Obtainium matches the release
+   version with the installed one and offers each new release. Allow it to install
+   unknown apps; on Android 12+ it can then update in the background.
+
+The first install from Obtainium may need a confirmation tap if the app was
+originally installed from a file.
 
 This is a personal sideload build signed with Christopher's existing development
 key. Keep that signing key for future updates. This build excludes debug controls.
