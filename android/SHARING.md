@@ -26,10 +26,7 @@ Every push to main that changes the app publishes a GitHub release of
 cjol/home-voice (tag v0.1.<n>) with the APK attached. To pick them up:
 
 1. Install Obtainium (https://github.com/ImranR98/Obtainium/releases) on the device.
-2. The repository is private, so create a fine-grained GitHub token with read-only
-   "Contents" access to cjol/home-voice only. In Obtainium's settings, paste it
-   as the GitHub personal access token.
-3. Add app: https://github.com/cjol/home-voice. Obtainium matches the release
+2. Add app: https://github.com/cjol/home-voice (public; no GitHub token needed). Obtainium matches the release
    version with the installed one and offers each new release. Allow it to install
    unknown apps; on Android 12+ it can then update in the background.
 
