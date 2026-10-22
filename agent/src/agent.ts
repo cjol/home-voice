@@ -173,6 +173,8 @@ export class VoiceAgent extends Agent<Env, State> {
 
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // The SDK has already handled a genuine OAuth callback; anything else here skipped the token check.
+    if (url.pathname.endsWith("/callback")) return new Response("not found", { status: 404 });
     if (request.method === "POST" && url.pathname.endsWith("/config")) {
       const body = (await request.json()) as { model?: string };
       const why = body.model ? NON_TOOL_MODELS[body.model] : undefined;

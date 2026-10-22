@@ -8,8 +8,13 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/health") return new Response("ok");
 
-    // OAuth callbacks from Executor come back without our device token.
-    const isOAuthCallback = /\/callback(\/|$)/.test(url.pathname);
+    // OAuth callbacks from Executor come back without our device token. Only a plain GET to the exact
+    // callback path skips the check, and the agent answers nothing there except a registered callback
+    // (VoiceAgent.onRequest), so the path can't be used to reach history or the device socket.
+    const isOAuthCallback =
+      request.method === "GET" &&
+      !request.headers.get("upgrade") &&
+      /^\/agents\/voice-agent\/[^/]+\/callback$/.test(url.pathname);
     if (!isOAuthCallback) {
       const token = url.searchParams.get("token") ?? request.headers.get("authorization")?.replace(/^Bearer /, "");
       if (!env.DEVICE_TOKEN || token !== env.DEVICE_TOKEN) {
